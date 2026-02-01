@@ -2516,9 +2516,9 @@ if __name__ == "__main__":
 - [x] Виправлено dropout в train_step для target network
 - [x] Виправлено off-by-one помилку в obstacle lifetime decay
 
-### Фаза 4: Навчання
-- [x] Написати `train_dqn.py`
-- [x] Створити конфіги
+### Фаза 4: Навчання ✅
+- [x] Написати `train_dqn.py` — CLI з --config, evaluation loop, metric logging, checkpointing
+- [x] Створити конфіги — training.yaml (DQN hyperparams), default_env.yaml (environment settings)
 - [ ] Запустити перше навчання
 - [ ] Налаштувати гіперпараметри
 
