@@ -1,204 +1,116 @@
 # Snake+ RL
 
-A Snake game with special objects and Reinforcement Learning agents that learn to play it. The project investigates the impact of the discount factor (gamma) on learning strategies.
+A reinforcement learning project built around a custom Snake game with diverse game objects. The project explores how different RL algorithms and hyperparameters — particularly the discount factor (gamma) — affect learning strategies in a dynamic environment.
 
-## Project Structure
+## About the Game
 
-```
-├── env/                      # Game environment
-│   ├── game_objects.py       # Object classes (apples, poison, etc.)
-│   ├── snake.py              # Snake class
-│   ├── snake_env.py          # Gymnasium environment
-│   └── renderer.py           # Pygame visualization
-│
-├── agent/                    # RL agents
-│   ├── q_table_agent.py      # Tabular Q-learning agent
-│   ├── dqn_agent.py          # Deep Q-Network agent
-│   ├── replay_buffer.py      # Experience replay buffer
-│   └── networks.py           # Neural networks (MLP, CNN, Dueling DQN)
-│
-├── training/                 # Training scripts
-│   └── train_dqn.py         # DQN training loop with evaluation & plotting
-│
-├── configs/                  # YAML configuration files
-│   ├── default_env.yaml     # Environment defaults
-│   └── training.yaml        # Training hyperparameters
-│
-├── experiments/              # Experimental analysis (Phase 5)
-├── visualization/            # Visualization tools (Phase 6)
-├── tests/                    # Unit tests
-└── results/                  # Output storage
-```
+Snake+ extends the classic Snake game with multiple object types that create a richer decision-making landscape for RL agents. The snake moves on a 15x15 grid and can perform three actions: move forward, turn left, or turn right.
 
-## Requirements
+### Game Objects
 
-- Python 3.10+
-- PyTorch 2.0+
-- Gymnasium 0.29+
-- Pygame 2.5+
-- NumPy, Matplotlib, PyYAML, tqdm
+| Object | Effect | Reward |
+|--------|--------|--------|
+| Apple | Grows the snake by 1 segment | +10 |
+| Golden Fruit | Grows the snake by 3 segments | +30 to +70 (randomized) |
+| Poison | Kills the snake instantly | -1000 |
+| Sour Fruit | Shrinks the snake by 1-3 segments | -5 |
+| Rotten Fruit | Detaches 3-5 tail segments, which become obstacles | -20 |
 
-## Installation
+Obstacles created by rotten fruit decay after a configurable number of steps. Colliding with walls, the snake's own body, or obstacles results in death (-1000 penalty). A small per-step penalty of -0.1 encourages efficient play.
 
-```bash
-pip install -r requirements.txt
-```
+## RL Agents
 
-## Quick Start
+The project implements two agent types:
 
-### Run Tests
+**Q-Table Agent** — A tabular Q-learning agent that discretizes the 18-dimensional feature observation space. Best suited for quick experimentation and baseline comparisons.
 
-```bash
-python -m pytest tests/ -v
-```
+**DQN Agent** — A Deep Q-Network agent with support for several advanced techniques:
+- Double DQN to reduce Q-value overestimation
+- Dueling network architecture to separately estimate state value and action advantages
+- Prioritized Experience Replay (PER) to focus training on high-error transitions
+- Target network with configurable update frequency
+- Linear epsilon-greedy exploration schedule with configurable decay
 
-### Use the Environment Programmatically
-
-```python
-from env.snake_env import SnakePlusEnv
-
-# Create environment
-env = SnakePlusEnv(
-    grid_size=(15, 15),
-    observation_type="features",  # or "grid" for CNN
-    max_steps=1000,
-)
-
-# Run a random agent
-obs, info = env.reset(seed=42)
-done = False
-total_reward = 0
-
-while not done:
-    action = env.action_space.sample()  # random action
-    obs, reward, terminated, truncated, info = env.step(action)
-    total_reward += reward
-    done = terminated or truncated
-
-print(f"Score: {info['score']}, Steps: {info['steps']}, Length: {info['length']}")
-env.close()
-```
-
-### Use the Q-Table Agent
-
-```python
-from env.snake_env import SnakePlusEnv
-from agent.q_table_agent import QTableAgent
-
-env = SnakePlusEnv(observation_type="features")
-agent = QTableAgent(
-    n_actions=3,
-    learning_rate=0.1,
-    discount_factor=0.99,
-)
-
-# Training loop
-for episode in range(1000):
-    obs, info = env.reset()
-    done = False
-
-    while not done:
-        action = agent.select_action(obs, training=True)
-        next_obs, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-        agent.update(obs, action, reward, next_obs, done)
-        obs = next_obs
-
-    if (episode + 1) % 100 == 0:
-        stats = agent.get_stats()
-        print(f"Episode {episode+1} | Q-table size: {stats['q_table_size']} | Epsilon: {stats['epsilon']:.3f}")
-
-# Save the trained agent
-agent.save("results/models/q_table_agent.pkl")
-```
-
-### Use the DQN Agent
-
-```python
-from env.snake_env import SnakePlusEnv
-from agent.dqn_agent import DQNAgent
-
-env = SnakePlusEnv(observation_type="features")
-agent = DQNAgent(
-    observation_type="features",
-    n_actions=3,
-    learning_rate=1e-4,
-    discount_factor=0.99,
-    use_double_dqn=True,
-)
-
-# Training loop
-for episode in range(5000):
-    obs, info = env.reset()
-    done = False
-    episode_reward = 0
-
-    while not done:
-        action = agent.select_action(obs, training=True)
-        next_obs, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-        agent.store_transition(obs, action, reward, next_obs, done)
-        metrics = agent.train_step()
-        obs = next_obs
-        episode_reward += reward
-
-    if (episode + 1) % 100 == 0:
-        print(f"Episode {episode+1} | Reward: {episode_reward:.1f} | Epsilon: {agent.epsilon:.3f}")
-
-# Save the trained model
-agent.save("results/models/dqn_model.pt")
-```
-
-### Train with the Training Script
-
-```bash
-python -m training.train_dqn --config configs/training.yaml
-```
-
-Results (model checkpoints, metrics, training curves) are saved to `results/runs/<timestamp>/`.
-
-To use a custom config, copy `configs/training.yaml`, edit the values, and pass the path:
-
-```bash
-python -m training.train_dqn --config configs/my_config.yaml
-```
-
-### Render the Game (requires display)
-
-```python
-from env.snake_env import SnakePlusEnv
-
-env = SnakePlusEnv(render_mode="human")
-obs, info = env.reset()
-done = False
-
-while not done:
-    env.render()
-    action = env.action_space.sample()
-    obs, reward, terminated, truncated, info = env.step(action)
-    done = terminated or truncated
-
-env.close()
-```
-
-## Game Objects
-
-| Object  | Effect                          | Reward   |
-|---------|---------------------------------|----------|
-| Apple   | +1 length                       | +10      |
-| Golden  | +3 length                       | +30..+70 |
-| Poison  | Instant death                   | -1000    |
-| Sour    | -1 to -3 length                 | -5       |
-| Rotten  | Detaches 3-5 tail segments (become obstacles) | -20 |
+Three neural network architectures are available: a fully-connected MLP (for feature observations), a CNN (for grid observations), and a Dueling variant of either.
 
 ## Observation Types
 
-- **features** (18-dim vector): danger signals, direction, food direction, nearest object type, distance, snake length. Suitable for Q-table and MLP-based DQN.
-- **grid** (8x15x15 tensor): multi-channel grid with separate channels for head, body, and each object type. Suitable for CNN-based DQN.
+The environment provides two observation formats:
 
-## Implemented Phases
+**Features** — An 18-dimensional vector containing danger signals in three directions, the snake's current direction (one-hot), food direction indicators, nearest object type (one-hot), distance to the nearest food, and normalized snake length. Used with Q-Table and MLP-based DQN agents.
 
-- **Phase 1**: Basic structure, game objects, snake logic, unit tests
-- **Phase 2**: Gymnasium environment, Pygame renderer
-- **Phase 3**: Q-table agent, DQN agent (with Double DQN, Dueling, PER support), replay buffers, neural networks
-- **Phase 4**: Training script with CLI, YAML configs, evaluation, metric logging, training curve plots
+**Grid** — An 8-channel 15x15 tensor with separate binary channels for the snake head, body, and each object type (apple, golden, poison, sour, rotten, obstacle). Used with CNN-based DQN agents.
+
+## Project Structure
+
+- `env/` — Gymnasium-compliant game environment, snake logic, game object definitions and reward calculator, Pygame renderer
+- `agent/` — Q-Table and DQN agent implementations, neural network architectures, standard and prioritized replay buffers
+- `training/` — Main training script with CLI interface, evaluation loop, metric logging, and training curve generation
+- `configs/` — YAML configuration files for environment and training hyperparameters
+- `tests/` — Unit tests for the environment, agents, and game logic
+- `experiments/` — Experimental analysis (planned)
+- `visualization/` — Visualization dashboard (planned)
+
+## Configuration
+
+All training and environment parameters are controlled via YAML config files in `configs/`. The main config file is `configs/training.yaml`, which defines:
+
+- **Environment settings**: grid size, object spawn probabilities, max objects on the field, obstacle decay rate, max steps per episode, and observation type
+- **Agent hyperparameters**: learning rate, discount factor, epsilon schedule, replay buffer size, batch size, target network update frequency, and toggles for Double DQN / Dueling / PER
+- **Training settings**: number of episodes, evaluation frequency, checkpoint save frequency, and random seed
+
+To customize training, copy `configs/training.yaml`, edit the values, and pass your config path to the training command.
+
+## Setup
+
+Requires Python 3.10 or higher.
+
+Install dependencies with uv:
+
+    uv pip install -r requirements.txt
+
+Or set up a virtual environment first:
+
+    uv venv
+    source .venv/bin/activate
+    uv pip install -r requirements.txt
+
+## Training
+
+Run the training script with the default configuration:
+
+    uv run python -m training.train_dqn --config configs/training.yaml
+
+To use a custom config:
+
+    uv run python -m training.train_dqn --config configs/my_custom_config.yaml
+
+Training outputs are saved to `results/runs/<timestamp>/` and include:
+- Model checkpoints saved at regular intervals
+- A final model file (`model_final.pt`)
+- Training metrics (`metrics.npz`)
+- A copy of the config used (`config.yaml`)
+- Training curve plots (`training_curves.png`) showing rewards, scores, losses, and reward distributions
+
+The training script logs progress every 100 episodes and runs greedy evaluation episodes every 500 episodes (configurable). Checkpoints are saved every 1000 episodes by default.
+
+## Running a Trained Model
+
+After training, load a saved model and run it in the environment. Pass `render_mode="human"` to the environment constructor to visualize the game with Pygame (requires a display).
+
+To run evaluation without rendering, instantiate the environment without a render mode, load the agent from a checkpoint using its `load` method, and run episodes with `training=False` in `select_action` to use greedy action selection (no exploration).
+
+Models are saved as `.pt` files (DQN) or `.pkl` files (Q-Table) and can be loaded back with each agent's `load` class method.
+
+## Running Tests
+
+    uv run python -m pytest tests/ -v
+
+## Implementation Status
+
+- **Phase 1**: Game foundation — game objects, snake logic, unit tests
+- **Phase 2**: Gymnasium environment integration, Pygame renderer
+- **Phase 3**: Q-Table agent, DQN agent with Double DQN / Dueling / PER support, replay buffers, neural network architectures
+- **Phase 4**: Training CLI script, YAML-based configuration, evaluation loop, metric logging, training curve plots
+- **Phase 5**: Experimental analysis of discount factor impact (planned)
+- **Phase 6**: Visualization tools and dashboard (planned)
