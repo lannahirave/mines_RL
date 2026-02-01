@@ -2493,24 +2493,28 @@ if __name__ == "__main__":
 
 ## ✅ Чекліст виконання
 
-### Фаза 1: Базова структура 
-- [ ] Створити структуру папок
-- [ ] Написати `requirements.txt`
-- [ ] Реалізувати `game_objects.py`
-- [ ] Реалізувати `snake.py`
-- [ ] Написати unit-тести для game logic
+### Фаза 1: Базова структура ✅
+- [x] Створити структуру папок
+- [x] Написати `requirements.txt`
+- [x] Реалізувати `game_objects.py` — ObjectType (6 типів), GameObject, ObjectFactory, RewardCalculator
+- [x] Реалізувати `snake.py` — Direction, Action, Snake з deque-based body, grow/shrink/detach_tail
+- [x] Написати unit-тести для game logic — test_game_logic.py (24+ тестів)
 
-### Фаза 2: Середовище 
-- [ ] Реалізувати `snake_env.py`
-- [ ] Реалізувати `renderer.py`
-- [ ] Протестувати середовище з випадковим агентом
+### Фаза 2: Середовище ✅
+- [x] Реалізувати `snake_env.py` — Gymnasium env, Discrete(3) actions, feature (18-dim) та grid (8×15×15) observations
+- [x] Реалізувати `renderer.py` — Pygame візуалізація з кольоровими об'єктами, info panel, human/rgb_array modes
+- [x] Протестувати середовище з випадковим агентом — test_env.py (13+ тестів)
 - [ ] Зареєструвати в Gymnasium
 
-### Фаза 3: Агенти 
-- [ ] Реалізувати `q_table_agent.py`
-- [ ] Реалізувати `replay_buffer.py`
-- [ ] Реалізувати `networks.py`
-- [ ] Реалізувати `dqn_agent.py`
+### Фаза 3: Агенти ✅
+- [x] Реалізувати `q_table_agent.py` — табличний Q-learning, ε-greedy, discretization, save/load
+- [x] Реалізувати `replay_buffer.py` — ReplayBuffer + PrioritizedReplayBuffer з importance sampling
+- [x] Реалізувати `networks.py` — DQN_MLP, DQN_CNN, DuelingDQN архітектури
+- [x] Реалізувати `dqn_agent.py` — Double DQN, target network, PER, gradient clipping, CUDA support
+- [x] Написати unit-тести для агентів — test_agent.py (10+ тестів)
+- [x] Виправлено dropout під час inference в select_action()
+- [x] Виправлено dropout в train_step для target network
+- [x] Виправлено off-by-one помилку в obstacle lifetime decay
 
 ### Фаза 4: Навчання
 - [ ] Написати `train_dqn.py`
@@ -2518,15 +2522,15 @@ if __name__ == "__main__":
 - [ ] Запустити перше навчання
 - [ ] Налаштувати гіперпараметри
 
-### Фаза 5: Експерименти (
+### Фаза 5: Експерименти
 - [ ] Реалізувати `discount_analysis.py`
 - [ ] Провести експерименти з різними γ
 - [ ] Задокументувати результати
 
-### Фаза 6: Візуалізація та документація 
+### Фаза 6: Візуалізація та документація
 - [ ] Реалізувати `dashboard.py`
 - [ ] Записати відео демонстрації
-- [ ] Написати README.md
+- [x] Написати README.md
 - [ ] Підготувати звіт
 
 ---
