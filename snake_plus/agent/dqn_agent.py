@@ -103,10 +103,12 @@ class DQNAgent:
         if training and np.random.random() < self.epsilon:
             return np.random.randint(self.n_actions)
 
+        self.q_network.eval()
         with torch.no_grad():
             state = torch.FloatTensor(observation).unsqueeze(0).to(self.device)
             q_values = self.q_network(state)
-            return q_values.argmax(dim=1).item()
+        self.q_network.train()
+        return q_values.argmax(dim=1).item()
 
     def store_transition(
         self,
