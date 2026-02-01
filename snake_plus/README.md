@@ -18,10 +18,15 @@ snake_plus/
 │   ├── replay_buffer.py      # Experience replay buffer
 │   └── networks.py           # Neural networks (MLP, CNN, Dueling DQN)
 │
-├── training/                 # Training scripts (Phase 4)
+├── training/                 # Training scripts
+│   └── train_dqn.py         # DQN training loop with evaluation & plotting
+│
+├── configs/                  # YAML configuration files
+│   ├── default_env.yaml     # Environment defaults
+│   └── training.yaml        # Training hyperparameters
+│
 ├── experiments/              # Experimental analysis (Phase 5)
 ├── visualization/            # Visualization tools (Phase 6)
-├── configs/                  # Configuration files (Phase 4)
 ├── tests/                    # Unit tests
 └── results/                  # Output storage
 ```
@@ -147,6 +152,21 @@ for episode in range(5000):
 agent.save("results/models/dqn_model.pt")
 ```
 
+### Train with the Training Script
+
+```bash
+cd snake_plus
+python -m training.train_dqn --config configs/training.yaml
+```
+
+Results (model checkpoints, metrics, training curves) are saved to `results/runs/<timestamp>/`.
+
+To use a custom config, copy `configs/training.yaml`, edit the values, and pass the path:
+
+```bash
+python -m training.train_dqn --config configs/my_config.yaml
+```
+
 ### Render the Game (requires display)
 
 ```python
@@ -185,3 +205,4 @@ env.close()
 - **Phase 1**: Basic structure, game objects, snake logic, unit tests
 - **Phase 2**: Gymnasium environment, Pygame renderer
 - **Phase 3**: Q-table agent, DQN agent (with Double DQN, Dueling, PER support), replay buffers, neural networks
+- **Phase 4**: Training script with CLI, YAML configs, evaluation, metric logging, training curve plots
