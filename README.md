@@ -5,7 +5,6 @@ A Snake game with special objects and Reinforcement Learning agents that learn t
 ## Project Structure
 
 ```
-snake_plus/
 ├── env/                      # Game environment
 │   ├── game_objects.py       # Object classes (apples, poison, etc.)
 │   ├── snake.py              # Snake class
@@ -42,7 +41,6 @@ snake_plus/
 ## Installation
 
 ```bash
-cd snake_plus
 pip install -r requirements.txt
 ```
 
@@ -51,7 +49,6 @@ pip install -r requirements.txt
 ### Run Tests
 
 ```bash
-cd snake_plus
 python -m pytest tests/ -v
 ```
 
@@ -155,7 +152,6 @@ agent.save("results/models/dqn_model.pt")
 ### Train with the Training Script
 
 ```bash
-cd snake_plus
 python -m training.train_dqn --config configs/training.yaml
 ```
 

@@ -11,7 +11,6 @@
 ## 📁 Структура проекту
 
 ```
-snake_plus/
 ├── README.md
 ├── requirements.txt
 ├── setup.py
