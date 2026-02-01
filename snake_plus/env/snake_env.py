@@ -269,7 +269,7 @@ class SnakePlusEnv(gym.Env):
                 obstacle = GameObject(
                     x=pos[0], y=pos[1],
                     object_type=ObjectType.OBSTACLE,
-                    lifetime=self.obstacle_decay if self.obstacle_decay else -1
+                    lifetime=self.obstacle_decay + 1 if self.obstacle_decay else -1
                 )
                 self.obstacles.append(obstacle)
 

@@ -151,7 +151,9 @@ class DQNAgent:
         # Current Q-values
         current_q = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
 
-        # Target Q-values
+        # Target Q-values (eval mode to disable dropout for deterministic targets)
+        self.q_network.eval()
+        self.target_network.eval()
         with torch.no_grad():
             if self.use_double_dqn:
                 # Double DQN: select action from q_network, evaluate with target
@@ -163,6 +165,8 @@ class DQNAgent:
                 next_q = self.target_network(next_states).max(dim=1)[0]
 
             target_q = rewards + self.gamma * next_q * (1 - dones)
+        self.q_network.train()
+        self.target_network.train()
 
         # TD error
         td_errors = target_q - current_q
