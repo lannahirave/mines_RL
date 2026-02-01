@@ -1,0 +1,33 @@
+# Training configuration
+
+env:
+  grid_size: [15, 15]
+  spawn_probs:
+    apple: 0.50
+    golden: 0.10
+    poison: 0.15
+    sour: 0.15
+    rotten: 0.10
+  max_objects: 5
+  obstacle_decay: 50
+  max_steps: 1000
+  observation_type: "features"
+
+agent:
+  learning_rate: 0.0001
+  discount_factor: 0.99
+  epsilon_start: 1.0
+  epsilon_end: 0.01
+  epsilon_decay_steps: 50000
+  buffer_size: 100000
+  batch_size: 64
+  target_update_freq: 1000
+  use_double_dqn: true
+  use_dueling: false
+  use_prioritized_replay: false
+
+training:
+  n_episodes: 10000
+  eval_freq: 500
+  save_freq: 1000
+  seed: 42

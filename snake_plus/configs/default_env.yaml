@@ -1,0 +1,15 @@
+# Snake+ environment configuration
+
+grid_size: [15, 15]
+
+spawn_probs:
+  apple: 0.50
+  golden: 0.10
+  poison: 0.15
+  sour: 0.15
+  rotten: 0.10
+
+max_objects: 5
+obstacle_decay: 50  # null for permanent obstacles
+max_steps: 1000
+observation_type: "features"  # "features" or "grid"
