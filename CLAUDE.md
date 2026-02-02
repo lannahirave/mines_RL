@@ -62,3 +62,8 @@ All hyperparameters live in `configs/training.yaml`. Three sections:
 ## Testing
 
 Tests use pytest with class-based organization. Each test class has `setup_method()` for per-test initialization. Test files mirror source structure: `test_env.py`, `test_agent.py`, `test_game_logic.py`.
+
+## Tool Rules
+
+- Always use `uv` for all Python operations: `uv run`, `uv pip install`, etc. Never use bare `pip` or `python`.
+- Never install dependencies without asking the user first. Always confirm before running any `uv pip install` command.
