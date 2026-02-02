@@ -50,7 +50,7 @@ def setup_cuda():
 
     # Print GPU info
     gpu_name = torch.cuda.get_device_name(0)
-    gpu_mem = torch.cuda.get_device_properties(0).total_mem / (1024 ** 3)
+    gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
     print(f"GPU: {gpu_name} ({gpu_mem:.1f} GB)")
     print(f"  cuDNN benchmark: enabled")
     print(f"  TF32: enabled")
