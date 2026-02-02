@@ -214,26 +214,26 @@
 ## TODO
 
 ### Реєстрація середовища
-- [ ] Зареєструвати SnakePlusEnv в Gymnasium (через `gymnasium.register()`)
+- [x] Зареєструвати SnakePlusEnv в Gymnasium (через `gymnasium.register()`) — `env/__init__.py`, id="SnakePlus-v0"
 
 ### Навчання та тюнінг
 - [ ] Запустити перше навчання DQN агента
 - [ ] Налаштувати гіперпараметри (learning rate, epsilon schedule, buffer size, тощо)
 
 ### Експерименти (experiments/)
-- [ ] Реалізувати `discount_analysis.py` — дослідження впливу коефіцієнта дисконтування (γ) на стратегію агента
+- [x] Реалізувати `discount_analysis.py` — дослідження впливу коефіцієнта дисконтування (γ) на стратегію агента
   - Запуск навчання з різними γ (0.1, 0.5, 0.9, 0.99, 0.999)
-  - Збір метрик: mean score, survival steps, rotten apples eaten, death by obstacle rate, survival rate, final length
-  - Візуалізація порівняння стратегій
+  - Збір метрик: mean score, survival steps, death by obstacle rate, survival rate, final length
+  - Візуалізація порівняння стратегій (training curves + evaluation bar charts)
 - [ ] Провести експерименти з різними γ
 - [ ] Задокументувати результати
 
 ### Візуалізація (visualization/)
-- [ ] Реалізувати `dashboard.py` — інтерактивний Pygame дашборд
+- [x] Реалізувати `dashboard.py` — інтерактивний Pygame дашборд
   - Два режими: спостереження за агентом / гра вручну
-  - Панель статистики (episodes, best/avg score)
-  - Управління: пауза, зміна швидкості, переключення режиму, reset
-  - Завантаження навченої моделі
+  - Панель статистики (episodes, best/avg score, length, obstacles)
+  - Управління: пауза (SPACE), зміна швидкості (+/-), переключення режиму (M), reset (R)
+  - Завантаження навченої моделі (--model)
 - [ ] Записати відео демонстрації
 
 ### Документація та звіт
