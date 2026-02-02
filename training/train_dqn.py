@@ -29,10 +29,39 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+
+def setup_cuda():
+    """Configures CUDA for maximum performance."""
+    if not torch.cuda.is_available():
+        print("CUDA not available, running on CPU")
+        return
+
+    # Enable cuDNN auto-tuner to find the best algorithm for the hardware
+    torch.backends.cudnn.benchmark = True
+
+    # Disable debug mode for performance
+    torch.backends.cudnn.enabled = True
+
+    # Allow TF32 on Ampere+ GPUs for faster matmuls
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
+    # Print GPU info
+    gpu_name = torch.cuda.get_device_name(0)
+    gpu_mem = torch.cuda.get_device_properties(0).total_mem / (1024 ** 3)
+    print(f"GPU: {gpu_name} ({gpu_mem:.1f} GB)")
+    print(f"  cuDNN benchmark: enabled")
+    print(f"  TF32: enabled")
+    print(f"  CUDA version: {torch.version.cuda}")
 
 
 def train(config: dict):
     """Main training loop."""
+
+    # Setup CUDA optimizations
+    setup_cuda()
 
     # Set seed if provided
     seed = config["training"].get("seed")
@@ -58,7 +87,10 @@ def train(config: dict):
         observation_type=config["env"]["observation_type"],
     )
 
-    # Create agent
+    # GPU config with defaults
+    gpu_config = config.get("gpu", {})
+
+    # Create agent with GPU optimizations
     agent = DQNAgent(
         observation_type=config["env"]["observation_type"],
         n_actions=3,
@@ -73,7 +105,18 @@ def train(config: dict):
         use_double_dqn=config["agent"]["use_double_dqn"],
         use_dueling=config["agent"]["use_dueling"],
         use_prioritized_replay=config["agent"]["use_prioritized_replay"],
+        device=gpu_config.get("device", "auto"),
+        use_amp=gpu_config.get("use_amp", True),
+        use_compile=gpu_config.get("use_compile", False),
+        pin_memory=gpu_config.get("pin_memory", True),
+        train_steps_per_update=gpu_config.get("train_steps_per_update", 1),
     )
+
+    print(f"Device: {agent.device}")
+    print(f"AMP: {'enabled' if agent.use_amp else 'disabled'}")
+    print(f"Batch size: {config['agent']['batch_size']}")
+    print(f"Buffer size: {config['agent']['buffer_size']}")
+    print(f"Train steps per update: {gpu_config.get('train_steps_per_update', 1)}")
 
     # Metrics
     episode_rewards = []
@@ -132,6 +175,10 @@ def train(config: dict):
             print(f"  Epsilon: {agent.epsilon:.3f}")
             if losses:
                 print(f"  Avg Loss (last 1000): {np.mean(losses[-1000:]):.4f}")
+            if torch.cuda.is_available():
+                gpu_mem_used = torch.cuda.memory_allocated() / (1024 ** 2)
+                gpu_mem_cached = torch.cuda.memory_reserved() / (1024 ** 2)
+                print(f"  GPU Memory: {gpu_mem_used:.0f} MB allocated, {gpu_mem_cached:.0f} MB reserved")
 
         # Evaluation
         if (episode + 1) % eval_freq == 0:

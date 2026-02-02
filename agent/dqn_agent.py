@@ -1,5 +1,8 @@
 """
-Deep Q-Network agent.
+Deep Q-Network agent with GPU optimizations.
+
+Supports mixed precision training (AMP), torch.compile, pinned memory,
+and async CPU→GPU transfers for maximum GPU utilization.
 """
 
 import torch
@@ -15,6 +18,13 @@ from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
 class DQNAgent:
     """
     DQN agent with target network and experience replay.
+
+    GPU optimizations:
+    - Mixed precision training (AMP) for ~2x speedup on tensor cores
+    - torch.compile for fused kernels
+    - Pinned memory replay buffer for async CPU→GPU transfers
+    - Direct tensor creation on device where possible
+    - set_to_none=True for zero_grad to avoid memset
     """
 
     def __init__(
@@ -32,7 +42,11 @@ class DQNAgent:
         use_double_dqn: bool = True,
         use_dueling: bool = False,
         use_prioritized_replay: bool = False,
-        device: str = "auto"
+        device: str = "auto",
+        use_amp: bool = True,
+        use_compile: bool = False,
+        pin_memory: bool = True,
+        train_steps_per_update: int = 1,
     ):
         """
         Args:
@@ -49,6 +63,10 @@ class DQNAgent:
             use_dueling: whether to use Dueling architecture
             use_prioritized_replay: whether to use PER
             device: "cpu", "cuda", or "auto"
+            use_amp: whether to use automatic mixed precision (CUDA only)
+            use_compile: whether to use torch.compile (PyTorch 2.0+)
+            pin_memory: whether to use pinned memory for replay buffer
+            train_steps_per_update: number of gradient steps per train_step call
         """
         # Determine device
         if device == "auto":
@@ -61,12 +79,17 @@ class DQNAgent:
         self.batch_size = batch_size
         self.target_update_freq = target_update_freq
         self.use_double_dqn = use_double_dqn
+        self.train_steps_per_update = train_steps_per_update
 
         # Epsilon scheduling
         self.epsilon = epsilon_start
         self.epsilon_start = epsilon_start
         self.epsilon_end = epsilon_end
         self.epsilon_decay_steps = epsilon_decay_steps
+
+        # AMP setup (only for CUDA)
+        self.use_amp = use_amp and self.device.type == "cuda"
+        self.scaler = torch.amp.GradScaler("cuda") if self.use_amp else None
 
         # Create networks
         if observation_type == "features":
@@ -83,14 +106,27 @@ class DQNAgent:
         # Copy weights
         self.target_network.load_state_dict(self.q_network.state_dict())
 
+        # Compile networks for fused kernels (PyTorch 2.0+)
+        if use_compile and hasattr(torch, "compile"):
+            try:
+                self.q_network = torch.compile(self.q_network)
+                self.target_network = torch.compile(self.target_network)
+            except Exception:
+                pass  # Fall back to eager mode if compile fails
+
         # Optimizer
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=learning_rate)
 
-        # Replay buffer
+        # Replay buffer with pinned memory for fast GPU transfers
+        use_pin = pin_memory and self.device.type == "cuda"
         if use_prioritized_replay:
-            self.replay_buffer = PrioritizedReplayBuffer(capacity=buffer_size)
+            self.replay_buffer = PrioritizedReplayBuffer(
+                capacity=buffer_size, pin_memory=use_pin
+            )
         else:
-            self.replay_buffer = ReplayBuffer(capacity=buffer_size)
+            self.replay_buffer = ReplayBuffer(
+                capacity=buffer_size, pin_memory=use_pin
+            )
 
         self.use_prioritized_replay = use_prioritized_replay
 
@@ -105,7 +141,9 @@ class DQNAgent:
 
         self.q_network.eval()
         with torch.no_grad():
-            state = torch.FloatTensor(observation).unsqueeze(0).to(self.device)
+            state = torch.as_tensor(
+                observation, dtype=torch.float32, device=self.device
+            ).unsqueeze(0)
             q_values = self.q_network(state)
         self.q_network.train()
         return q_values.argmax(dim=1).item()
@@ -123,7 +161,7 @@ class DQNAgent:
 
     def train_step(self) -> Optional[Dict]:
         """
-        Performs one training step.
+        Performs one or more training steps (controlled by train_steps_per_update).
 
         Returns:
             Dict with metrics or None if buffer too small
@@ -131,57 +169,73 @@ class DQNAgent:
         if len(self.replay_buffer) < self.batch_size:
             return None
 
-        # Sample batch
+        total_loss = 0.0
+        total_q = 0.0
+
+        for _ in range(self.train_steps_per_update):
+            metrics = self._single_train_step()
+            if metrics:
+                total_loss += metrics["loss"]
+                total_q += metrics["mean_q"]
+
+        return {
+            "loss": total_loss / self.train_steps_per_update,
+            "mean_q": total_q / self.train_steps_per_update,
+            "epsilon": self.epsilon,
+        }
+
+    def _single_train_step(self) -> Optional[Dict]:
+        """Performs a single gradient update step."""
+        # Sample batch - use direct tensor sampling for GPU path
         if self.use_prioritized_replay:
-            states, actions, rewards, next_states, dones, indices, weights = \
-                self.replay_buffer.sample(self.batch_size)
-            weights = torch.FloatTensor(weights).to(self.device)
-        else:
-            states, actions, rewards, next_states, dones = \
-                self.replay_buffer.sample(self.batch_size)
-            weights = torch.ones(self.batch_size).to(self.device)
-
-        # Convert to tensors
-        states = torch.FloatTensor(states).to(self.device)
-        actions = torch.LongTensor(actions).to(self.device)
-        rewards = torch.FloatTensor(rewards).to(self.device)
-        next_states = torch.FloatTensor(next_states).to(self.device)
-        dones = torch.FloatTensor(dones).to(self.device)
-
-        # Current Q-values
-        current_q = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
-
-        # Target Q-values (eval mode to disable dropout for deterministic targets)
-        self.q_network.eval()
-        self.target_network.eval()
-        with torch.no_grad():
-            if self.use_double_dqn:
-                # Double DQN: select action from q_network, evaluate with target
-                next_actions = self.q_network(next_states).argmax(dim=1)
-                next_q = self.target_network(next_states).gather(
-                    1, next_actions.unsqueeze(1)
-                ).squeeze(1)
+            if hasattr(self.replay_buffer, 'sample_tensors'):
+                states, actions, rewards, next_states, dones, indices, weights = \
+                    self.replay_buffer.sample_tensors(self.batch_size, self.device)
             else:
-                next_q = self.target_network(next_states).max(dim=1)[0]
+                states, actions, rewards, next_states, dones, indices, weights = \
+                    self.replay_buffer.sample(self.batch_size)
+                weights = torch.as_tensor(weights, dtype=torch.float32, device=self.device)
+                states = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+                actions = torch.as_tensor(actions, dtype=torch.long, device=self.device)
+                rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device)
+                next_states = torch.as_tensor(next_states, dtype=torch.float32, device=self.device)
+                dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device)
+        else:
+            if hasattr(self.replay_buffer, 'sample_tensors'):
+                states, actions, rewards, next_states, dones = \
+                    self.replay_buffer.sample_tensors(self.batch_size, self.device)
+            else:
+                states, actions, rewards, next_states, dones = \
+                    self.replay_buffer.sample(self.batch_size)
+                states = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+                actions = torch.as_tensor(actions, dtype=torch.long, device=self.device)
+                rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device)
+                next_states = torch.as_tensor(next_states, dtype=torch.float32, device=self.device)
+                dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device)
+            weights = torch.ones(self.batch_size, device=self.device)
 
-            target_q = rewards + self.gamma * next_q * (1 - dones)
-        self.q_network.train()
-        self.target_network.train()
+        # Forward pass with optional AMP
+        if self.use_amp:
+            loss, current_q, td_errors = self._compute_loss_amp(
+                states, actions, rewards, next_states, dones, weights
+            )
+        else:
+            loss, current_q, td_errors = self._compute_loss(
+                states, actions, rewards, next_states, dones, weights
+            )
 
-        # TD error
-        td_errors = target_q - current_q
-
-        # Loss (weighted for PER)
-        loss = (weights * td_errors.pow(2)).mean()
-
-        # Update network
-        self.optimizer.zero_grad()
-        loss.backward()
-
-        # Gradient clipping
-        torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 10)
-
-        self.optimizer.step()
+        # Backward pass
+        self.optimizer.zero_grad(set_to_none=True)
+        if self.use_amp:
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 10)
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 10)
+            self.optimizer.step()
 
         # Update priorities in PER
         if self.use_prioritized_replay:
@@ -206,6 +260,74 @@ class DQNAgent:
             "epsilon": self.epsilon,
         }
 
+    def _compute_loss(
+        self,
+        states: torch.Tensor,
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        next_states: torch.Tensor,
+        dones: torch.Tensor,
+        weights: torch.Tensor,
+    ):
+        """Computes TD loss in float32."""
+        # Current Q-values
+        current_q = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+
+        # Target Q-values
+        self.q_network.eval()
+        self.target_network.eval()
+        with torch.no_grad():
+            if self.use_double_dqn:
+                next_actions = self.q_network(next_states).argmax(dim=1)
+                next_q = self.target_network(next_states).gather(
+                    1, next_actions.unsqueeze(1)
+                ).squeeze(1)
+            else:
+                next_q = self.target_network(next_states).max(dim=1)[0]
+
+            target_q = rewards + self.gamma * next_q * (1 - dones)
+        self.q_network.train()
+        self.target_network.train()
+
+        td_errors = target_q - current_q
+        loss = (weights * td_errors.pow(2)).mean()
+
+        return loss, current_q, td_errors
+
+    def _compute_loss_amp(
+        self,
+        states: torch.Tensor,
+        actions: torch.Tensor,
+        rewards: torch.Tensor,
+        next_states: torch.Tensor,
+        dones: torch.Tensor,
+        weights: torch.Tensor,
+    ):
+        """Computes TD loss with automatic mixed precision."""
+        with torch.amp.autocast("cuda"):
+            current_q = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+
+            self.q_network.eval()
+            self.target_network.eval()
+            with torch.no_grad():
+                if self.use_double_dqn:
+                    next_actions = self.q_network(next_states).argmax(dim=1)
+                    next_q = self.target_network(next_states).gather(
+                        1, next_actions.unsqueeze(1)
+                    ).squeeze(1)
+                else:
+                    next_q = self.target_network(next_states).max(dim=1)[0]
+
+                target_q = rewards + self.gamma * next_q * (1 - dones)
+            self.q_network.train()
+            self.target_network.train()
+
+            td_errors = target_q - current_q
+            # Compute loss in float32 for numerical stability
+            loss = (weights * td_errors.float().pow(2)).mean()
+
+        return loss, current_q.float(), td_errors.float()
+
     def _update_epsilon(self):
         """Updates epsilon with linear schedule."""
         progress = min(1.0, self.training_steps / self.epsilon_decay_steps)
@@ -213,14 +335,17 @@ class DQNAgent:
 
     def save(self, path: str):
         """Saves model."""
-        torch.save({
+        save_dict = {
             "q_network": self.q_network.state_dict(),
             "target_network": self.target_network.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "epsilon": self.epsilon,
             "training_steps": self.training_steps,
             "updates": self.updates,
-        }, path)
+        }
+        if self.scaler is not None:
+            save_dict["scaler"] = self.scaler.state_dict()
+        torch.save(save_dict, path)
 
     def load(self, path: str):
         """Loads model."""
@@ -232,3 +357,5 @@ class DQNAgent:
         self.epsilon = checkpoint["epsilon"]
         self.training_steps = checkpoint["training_steps"]
         self.updates = checkpoint["updates"]
+        if self.scaler is not None and "scaler" in checkpoint:
+            self.scaler.load_state_dict(checkpoint["scaler"])
