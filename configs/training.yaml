@@ -18,24 +18,24 @@ agent:
   discount_factor: 0.99
   epsilon_start: 1.0
   epsilon_end: 0.01
-  epsilon_decay_steps: 50000
+  epsilon_decay_steps: 300000
   buffer_size: 200000
   batch_size: 256
   target_update_freq: 1000
   use_double_dqn: true
-  use_dueling: false
-  use_prioritized_replay: false
+  use_dueling: true
+  use_prioritized_replay: true
 
 training:
-  n_episodes: 10000
-  eval_freq: 500
-  save_freq: 1000
+  n_episodes: 30000
+  eval_freq: 1500
+  save_freq: 3000
   seed: 42
 
-# GPU optimization settings (RTX 3080 / 10 GB VRAM)
+# GPU optimization settings
 gpu:
-  device: "auto"           # "auto", "cuda", or "cpu"
+  device: "auto"           # "auto", "cuda", "mps", or "cpu"
   use_amp: true            # Automatic mixed precision (uses tensor cores)
-  use_compile: false       # torch.compile - enable for PyTorch 2.0+ (small overhead on first run)
+  use_compile: true        # torch.compile - enable for PyTorch 2.0+ (small overhead on first run)
   pin_memory: true         # Pinned memory for async CPU→GPU transfers
   train_steps_per_update: 1  # Gradient steps per env step (increase to 2-4 for more GPU utilization)
