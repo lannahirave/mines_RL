@@ -144,13 +144,11 @@ class DQNAgent:
         if training and np.random.random() < self.epsilon:
             return np.random.randint(self.n_actions)
 
-        self.q_network.eval()
         with torch.no_grad():
             state = torch.as_tensor(
                 observation, dtype=torch.float32, device=self.device
             ).unsqueeze(0)
             q_values = self.q_network(state)
-        self.q_network.train()
         return q_values.argmax(dim=1).item()
 
     def store_transition(
@@ -279,8 +277,6 @@ class DQNAgent:
         current_q = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
 
         # Target Q-values
-        self.q_network.eval()
-        self.target_network.eval()
         with torch.no_grad():
             if self.use_double_dqn:
                 next_actions = self.q_network(next_states).argmax(dim=1)
@@ -291,8 +287,6 @@ class DQNAgent:
                 next_q = self.target_network(next_states).max(dim=1)[0]
 
             target_q = rewards + self.gamma * next_q * (1 - dones)
-        self.q_network.train()
-        self.target_network.train()
 
         td_errors = target_q - current_q
         loss = (weights * td_errors.pow(2)).mean()
@@ -312,8 +306,6 @@ class DQNAgent:
         with torch.amp.autocast("cuda"):
             current_q = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
 
-            self.q_network.eval()
-            self.target_network.eval()
             with torch.no_grad():
                 if self.use_double_dqn:
                     next_actions = self.q_network(next_states).argmax(dim=1)
@@ -324,8 +316,6 @@ class DQNAgent:
                     next_q = self.target_network(next_states).max(dim=1)[0]
 
                 target_q = rewards + self.gamma * next_q * (1 - dones)
-            self.q_network.train()
-            self.target_network.train()
 
             td_errors = target_q - current_q
             # Compute loss in float32 for numerical stability

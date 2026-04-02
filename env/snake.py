@@ -50,6 +50,7 @@ class Snake:
         """
         self.direction = start_direction
         self.grow_pending = 0  # how many segments to add
+        self._body_set: Optional[set] = None
 
         # Body as deque: [head, ..., tail]
         self.body: deque = deque()
@@ -77,8 +78,10 @@ class Snake:
         return len(self.body)
 
     def get_body_set(self) -> set:
-        """Returns set of body positions (for fast collision checks)."""
-        return set(self.body)
+        """Returns cached set of body positions. Invalidated on move/shrink/detach."""
+        if self._body_set is None:
+            self._body_set = set(self.body)
+        return self._body_set
 
     def apply_action(self, action: Action) -> None:
         """Changes direction according to action."""
@@ -95,6 +98,8 @@ class Snake:
         Returns:
             New head position
         """
+        self._body_set = None
+
         # Calculate new head position
         hx, hy = self.head
         dx, dy = self.direction.value
@@ -120,6 +125,7 @@ class Snake:
         Decreases length by amount segments.
         Minimum length = 1 (head only).
         """
+        self._body_set = None
         for _ in range(min(amount, len(self.body) - 1)):
             self.body.pop()
 
@@ -130,6 +136,7 @@ class Snake:
         Returns:
             List of positions of detached segments (will become obstacles)
         """
+        self._body_set = None
         detached = []
         for _ in range(min(amount, len(self.body) - 1)):
             pos = self.body.pop()
@@ -138,4 +145,6 @@ class Snake:
 
     def check_self_collision(self) -> bool:
         """Checks if head collided with body."""
-        return self.head in list(self.body)[1:]
+        # If head appears more than once in body, there's a collision.
+        # The body set has fewer entries than the deque when there's a duplicate.
+        return len(self.get_body_set()) < len(self.body)

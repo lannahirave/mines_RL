@@ -49,7 +49,7 @@ class ObjectFactory:
 
     def create_random_object(self, occupied_positions: set) -> GameObject:
         """
-        Creates a random object at a free position.
+        Creates a random object at a free position using rejection sampling.
 
         Args:
             occupied_positions: set of occupied positions {(x, y), ...}
@@ -57,22 +57,21 @@ class ObjectFactory:
         Returns:
             GameObject or None if no space available
         """
-        free_positions = [
-            (x, y)
-            for x in range(self.grid_size[0])
-            for y in range(self.grid_size[1])
-            if (x, y) not in occupied_positions
-        ]
-
-        if not free_positions:
+        total_cells = self.grid_size[0] * self.grid_size[1]
+        if len(occupied_positions) >= total_cells:
             return None
 
-        x, y = random.choice(free_positions)
+        # Rejection sampling: random position, retry if occupied.
+        # Expected attempts = total / free, so very fast when grid is mostly empty.
+        max_attempts = total_cells  # guaranteed to find if free space exists
+        w, h = self.grid_size
+        for _ in range(max_attempts):
+            x = random.randint(0, w - 1)
+            y = random.randint(0, h - 1)
+            if (x, y) not in occupied_positions:
+                return GameObject(x=x, y=y, object_type=self._random_type())
 
-        # Choose object type
-        obj_type = self._random_type()
-
-        return GameObject(x=x, y=y, object_type=obj_type)
+        return None
 
     def _random_type(self) -> ObjectType:
         """Chooses a random type according to probabilities."""

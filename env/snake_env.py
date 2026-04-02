@@ -110,11 +110,21 @@ class SnakePlusEnv(gym.Env):
         self.snake: Optional[Snake] = None
         self.objects: List[GameObject] = []
         self.obstacles: List[GameObject] = []  # detached tails
+        self._obstacle_pos_set: Optional[set] = None
         self.score: int = 0
         self.steps: int = 0
 
         # Renderer (initialized on first render)
         self.renderer = None
+
+    def _get_obstacle_set(self) -> set:
+        """Returns cached set of obstacle positions."""
+        if self._obstacle_pos_set is None:
+            self._obstacle_pos_set = {obs.position for obs in self.obstacles}
+        return self._obstacle_pos_set
+
+    def _invalidate_obstacle_cache(self):
+        self._obstacle_pos_set = None
 
     def reset(
         self,
@@ -142,6 +152,7 @@ class SnakePlusEnv(gym.Env):
 
         self.objects = []
         self.obstacles = []
+        self._obstacle_pos_set = None
         self.score = 0
         self.steps = 0
 
@@ -191,8 +202,7 @@ class SnakePlusEnv(gym.Env):
             return self._get_observation(), reward, terminated, truncated, self._get_info()
 
         # Check obstacle collision
-        obstacle_positions = {obs.position for obs in self.obstacles}
-        if new_head in obstacle_positions:
+        if new_head in self._get_obstacle_set():
             reward += RewardCalculator.DEATH_PENALTY
             terminated = True
             return self._get_observation(), reward, terminated, truncated, self._get_info()
@@ -265,6 +275,7 @@ class SnakePlusEnv(gym.Env):
             detached_positions = self.snake.detach_tail(detach_amount)
 
             # Create obstacles
+            self._invalidate_obstacle_cache()
             for pos in detached_positions:
                 obstacle = GameObject(
                     x=pos[0], y=pos[1],
@@ -289,6 +300,8 @@ class SnakePlusEnv(gym.Env):
             elif obs.lifetime == -1:  # permanent
                 remaining.append(obs)
 
+        if len(remaining) != len(self.obstacles):
+            self._invalidate_obstacle_cache()
         self.obstacles = remaining
 
     def _spawn_objects(self) -> None:
@@ -305,9 +318,9 @@ class SnakePlusEnv(gym.Env):
 
     def _get_occupied_positions(self) -> set:
         """Returns all occupied positions."""
-        occupied = self.snake.get_body_set()
+        occupied = set(self.snake.get_body_set())
         occupied.update(obj.position for obj in self.objects)
-        occupied.update(obs.position for obs in self.obstacles)
+        occupied.update(self._get_obstacle_set())
         return occupied
 
     def _is_valid_position(self, pos: Tuple[int, int]) -> bool:
@@ -440,16 +453,13 @@ class SnakePlusEnv(gym.Env):
         dx, dy = direction.value
         next_pos = (hx + dx, hy + dy)
 
-        # Wall
         if not self._is_valid_position(next_pos):
             return 1.0
 
-        # Body
         if next_pos in self.snake.get_body_set():
             return 1.0
 
-        # Obstacle
-        if next_pos in {obs.position for obs in self.obstacles}:
+        if next_pos in self._get_obstacle_set():
             return 1.0
 
         return 0.0

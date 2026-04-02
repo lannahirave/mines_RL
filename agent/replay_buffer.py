@@ -9,6 +9,8 @@ import numpy as np
 from typing import Tuple, Optional
 import random
 
+from .sum_tree import SumTree
+
 
 class ReplayBuffer:
     """
@@ -115,10 +117,9 @@ class ReplayBuffer:
 
 class PrioritizedReplayBuffer:
     """
-    Prioritized Experience Replay.
-    Experience with higher TD error is sampled more frequently.
+    Prioritized Experience Replay backed by a sum tree.
 
-    Uses pre-allocated arrays and supports pinned memory for GPU transfers.
+    Push, sample, and priority update are all O(log n) instead of O(n).
     """
 
     def __init__(
@@ -143,7 +144,7 @@ class PrioritizedReplayBuffer:
         self.beta_frames = beta_frames
         self.pin_memory = pin_memory and torch.cuda.is_available()
 
-        self.priorities = np.zeros(capacity, dtype=np.float32)
+        self.tree = SumTree(capacity)
         self.position = 0
         self.size = 0
         self.frame = 0
@@ -168,41 +169,36 @@ class PrioritizedReplayBuffer:
         next_state: np.ndarray,
         done: bool
     ):
-        """Adds experience with maximum priority."""
+        """Adds experience with maximum priority. O(log n)."""
         if not self._initialized:
             self._initialize(state)
-
-        max_priority = self.priorities[:self.size].max() if self.size > 0 else 1.0
 
         self.states[self.position] = state
         self.actions[self.position] = action
         self.rewards[self.position] = reward
         self.next_states[self.position] = next_state
         self.dones[self.position] = float(done)
-        self.priorities[self.position] = max_priority
+
+        self.tree.update(self.position, self.tree.max_priority ** self.alpha)
 
         self.position = (self.position + 1) % self.capacity
         self.size = min(self.size + 1, self.capacity)
 
     def sample(self, batch_size: int) -> Tuple[np.ndarray, ...]:
-        """Samples with priority weighting."""
+        """Samples with priority weighting. O(k log n)."""
         self.frame += 1
 
-        # Compute beta
         beta = min(1.0, self.beta_start +
                    self.frame * (1.0 - self.beta_start) / self.beta_frames)
 
-        # Probabilities
-        priorities = self.priorities[:self.size]
-        probs = priorities ** self.alpha
-        probs /= probs.sum()
-
-        # Sample indices
-        indices = np.random.choice(self.size, batch_size, p=probs)
+        indices = self.tree.sample(batch_size)
 
         # Importance sampling weights
-        weights = (self.size * probs[indices]) ** (-beta)
-        weights /= weights.max()
+        priorities = np.array([self.tree[i] for i in indices])
+        min_prob = priorities.min() / self.tree.total
+        weights = (priorities / self.tree.total) ** (-beta)
+        max_weight = (min_prob) ** (-beta)
+        weights /= max_weight
 
         return (
             self.states[indices],
@@ -211,7 +207,7 @@ class PrioritizedReplayBuffer:
             self.next_states[indices],
             self.dones[indices],
             indices,
-            weights,
+            weights.astype(np.float32),
         )
 
     def sample_tensors(
@@ -235,7 +231,7 @@ class PrioritizedReplayBuffer:
             t_rewards = torch.from_numpy(rewards).pin_memory().to(device, non_blocking=True)
             t_next_states = torch.from_numpy(next_states).pin_memory().to(device, non_blocking=True)
             t_dones = torch.from_numpy(dones).pin_memory().to(device, non_blocking=True)
-            t_weights = torch.from_numpy(weights.astype(np.float32)).pin_memory().to(device, non_blocking=True)
+            t_weights = torch.from_numpy(weights).pin_memory().to(device, non_blocking=True)
         else:
             t_states = torch.as_tensor(states, dtype=torch.float32, device=device)
             t_actions = torch.as_tensor(actions, dtype=torch.long, device=device)
@@ -247,9 +243,9 @@ class PrioritizedReplayBuffer:
         return t_states, t_actions, t_rewards, t_next_states, t_dones, indices, t_weights
 
     def update_priorities(self, indices: np.ndarray, td_errors: np.ndarray):
-        """Updates priorities."""
-        for idx, td_error in zip(indices, td_errors):
-            self.priorities[idx] = abs(td_error) + 1e-6
+        """Updates priorities. O(k log n)."""
+        priorities = (np.abs(td_errors) + 1e-6) ** self.alpha
+        self.tree.update_batch(indices, priorities)
 
     def __len__(self) -> int:
         return self.size
