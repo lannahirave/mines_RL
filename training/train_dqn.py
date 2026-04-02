@@ -32,36 +32,31 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-def setup_cuda():
-    """Configures CUDA for maximum performance."""
-    if not torch.cuda.is_available():
-        print("CUDA not available, running on CPU")
-        return
+def setup_device():
+    """Configures GPU backend for maximum performance."""
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.enabled = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
-    # Enable cuDNN auto-tuner to find the best algorithm for the hardware
-    torch.backends.cudnn.benchmark = True
-
-    # Disable debug mode for performance
-    torch.backends.cudnn.enabled = True
-
-    # Allow TF32 on Ampere+ GPUs for faster matmuls
-    torch.backends.cuda.matmul.allow_tf32 = True
-    torch.backends.cudnn.allow_tf32 = True
-
-    # Print GPU info
-    gpu_name = torch.cuda.get_device_name(0)
-    gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
-    print(f"GPU: {gpu_name} ({gpu_mem:.1f} GB)")
-    print(f"  cuDNN benchmark: enabled")
-    print(f"  TF32: enabled")
-    print(f"  CUDA version: {torch.version.cuda}")
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        print(f"GPU: {gpu_name} ({gpu_mem:.1f} GB)")
+        print(f"  cuDNN benchmark: enabled")
+        print(f"  TF32: enabled")
+        print(f"  CUDA version: {torch.version.cuda}")
+    elif torch.backends.mps.is_available():
+        print(f"Device: MPS (Apple Silicon)")
+    else:
+        print("No GPU available, running on CPU")
 
 
 def train(config: dict):
     """Main training loop."""
 
-    # Setup CUDA optimizations
-    setup_cuda()
+    # Setup GPU optimizations
+    setup_device()
 
     # Set seed if provided
     seed = config["training"].get("seed")
@@ -179,6 +174,10 @@ def train(config: dict):
                 gpu_mem_used = torch.cuda.memory_allocated() / (1024 ** 2)
                 gpu_mem_cached = torch.cuda.memory_reserved() / (1024 ** 2)
                 print(f"  GPU Memory: {gpu_mem_used:.0f} MB allocated, {gpu_mem_cached:.0f} MB reserved")
+            elif torch.backends.mps.is_available():
+                gpu_mem_used = torch.mps.current_allocated_memory() / (1024 ** 2)
+                gpu_mem_driver = torch.mps.driver_allocated_memory() / (1024 ** 2)
+                print(f"  MPS Memory: {gpu_mem_used:.0f} MB allocated, {gpu_mem_driver:.0f} MB driver")
 
         # Evaluation
         if (episode + 1) % eval_freq == 0:
