@@ -189,6 +189,7 @@ def train(config: dict):
         # Save model checkpoint
         if (episode + 1) % save_freq == 0:
             agent.save(str(run_dir / f"model_ep{episode + 1}.pt"))
+            plot_training_curves(episode_rewards, episode_scores, losses, run_dir)
 
     # Save final model
     agent.save(str(run_dir / "model_final.pt"))
