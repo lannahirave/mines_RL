@@ -2,7 +2,8 @@ import gymnasium
 
 from .game_objects import ObjectType, GameObject, ObjectFactory, RewardCalculator
 from .snake import Snake, Direction, Action
-from .snake_env import SnakePlusEnv
+from .snake_env import SnakePlusEnv, make_snake_env
+from .wrappers import FrameStack
 
 gymnasium.register(
     id="SnakePlus-v0",

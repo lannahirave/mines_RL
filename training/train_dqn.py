@@ -18,7 +18,8 @@ import random
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from env.snake_env import SnakePlusEnv
+from env.snake_env import make_snake_env
+from env.wrappers import FrameStack
 from agent.dqn_agent import DQNAgent
 
 
@@ -72,15 +73,11 @@ def train(config: dict):
     with open(run_dir / "config.yaml", "w") as f:
         yaml.dump(config, f)
 
-    # Create environment
-    env = SnakePlusEnv(
-        grid_size=tuple(config["env"]["grid_size"]),
-        spawn_probs=config["env"]["spawn_probs"],
-        max_objects=config["env"]["max_objects"],
-        obstacle_decay=config["env"].get("obstacle_decay"),
-        max_steps=config["env"]["max_steps"],
-        observation_type=config["env"]["observation_type"],
-    )
+    # Create environment (with optional frame stacking)
+    env = make_snake_env(config["env"])
+    n_frames = config["agent"].get("n_frames", 1)
+    if n_frames > 1:
+        env = FrameStack(env, n_frames=n_frames)
 
     # GPU config with defaults
     gpu_config = config.get("gpu", {})
@@ -105,6 +102,15 @@ def train(config: dict):
         use_compile=gpu_config.get("use_compile", False),
         pin_memory=gpu_config.get("pin_memory", True),
         train_steps_per_update=gpu_config.get("train_steps_per_update", 1),
+        lr_cosine_steps=config["agent"].get("lr_cosine_steps", 500000),
+        lr_min=config["agent"].get("lr_min", 1e-6),
+        warmup_steps=config["agent"].get("warmup_steps", 0),
+        tau=config["agent"].get("tau", 1.0),
+        sign_log_reward=config["agent"].get("sign_log_reward", False),
+        n_step=config["agent"].get("n_step", 1),
+        n_frames=n_frames,
+        grid_size=tuple(config["env"]["grid_size"]),
+        network_type=config["agent"].get("network_type", "grid"),
     )
 
     print(f"Device: {agent.device}")
@@ -112,6 +118,13 @@ def train(config: dict):
     print(f"Batch size: {config['agent']['batch_size']}")
     print(f"Buffer size: {config['agent']['buffer_size']}")
     print(f"Train steps per update: {gpu_config.get('train_steps_per_update', 1)}")
+    print(f"LR schedule: cosine annealing over {config['agent'].get('lr_cosine_steps', 500000)} steps "
+          f"to {config['agent'].get('lr_min', 1e-6)}")
+    print(f"Warmup steps: {agent.warmup_steps}")
+    print(f"Tau: {agent.tau}")
+    print(f"Sign-log reward: {agent.sign_log_reward}")
+    print(f"N-step: {agent.n_step}")
+    print(f"Frame stack: {n_frames}")
 
     # Metrics
     episode_rewards = []
@@ -139,8 +152,8 @@ def train(config: dict):
             next_state, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
 
-            # Store transition
-            agent.store_transition(state, action, reward, next_state, done)
+            # Store transition (use terminated, not done, so truncated episodes bootstrap)
+            agent.store_transition(state, action, reward, next_state, terminated)
 
             # Train agent
             metrics = agent.train_step()
@@ -168,6 +181,7 @@ def train(config: dict):
             print(f"  Avg Score: {avg_score:.2f}")
             print(f"  Avg Length: {avg_length:.2f}")
             print(f"  Epsilon: {agent.epsilon:.3f}")
+            print(f"  LR: {agent.optimizer.param_groups[0]['lr']:.2e}")
             if losses:
                 print(f"  Avg Loss (last 1000): {np.mean(losses[-1000:]):.4f}")
             if torch.cuda.is_available():
@@ -214,14 +228,10 @@ def train(config: dict):
 
 def evaluate(agent: DQNAgent, config: dict, n_episodes: int = 100) -> dict:
     """Evaluates agent without exploration."""
-    env = SnakePlusEnv(
-        grid_size=tuple(config["env"]["grid_size"]),
-        spawn_probs=config["env"]["spawn_probs"],
-        max_objects=config["env"]["max_objects"],
-        obstacle_decay=config["env"].get("obstacle_decay"),
-        max_steps=config["env"]["max_steps"],
-        observation_type=config["env"]["observation_type"],
-    )
+    env = make_snake_env(config["env"])
+    n_frames = config["agent"].get("n_frames", 1)
+    if n_frames > 1:
+        env = FrameStack(env, n_frames=n_frames)
 
     scores = []
     lengths = []

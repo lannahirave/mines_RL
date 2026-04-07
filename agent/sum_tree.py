@@ -48,7 +48,12 @@ class SumTree:
             Array of leaf indices.
         """
         indices = np.empty(batch_size, dtype=np.int64)
-        segment = self.total / batch_size
+        total = self.total
+
+        if total <= 0 or not np.isfinite(total):
+            return np.random.randint(0, max(1, self.capacity), size=batch_size)
+
+        segment = total / batch_size
 
         for i in range(batch_size):
             s = np.random.uniform(segment * i, segment * (i + 1))

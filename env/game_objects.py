@@ -47,6 +47,32 @@ class ObjectFactory:
         total = sum(spawn_probs.values())
         self.normalized_probs = {k: v / total for k, v in spawn_probs.items()}
 
+    def create_typed_object(
+        self, object_type: ObjectType, occupied_positions: set
+    ) -> GameObject:
+        """
+        Creates an object of a specific type at a free position.
+
+        Args:
+            object_type: desired object type
+            occupied_positions: set of occupied positions {(x, y), ...}
+
+        Returns:
+            GameObject or None if no space available
+        """
+        total_cells = self.grid_size[0] * self.grid_size[1]
+        if len(occupied_positions) >= total_cells:
+            return None
+
+        w, h = self.grid_size
+        for _ in range(total_cells):
+            x = random.randint(0, w - 1)
+            y = random.randint(0, h - 1)
+            if (x, y) not in occupied_positions:
+                return GameObject(x=x, y=y, object_type=object_type)
+
+        return None
+
     def create_random_object(self, occupied_positions: set) -> GameObject:
         """
         Creates a random object at a free position using rejection sampling.
@@ -101,15 +127,15 @@ class RewardCalculator:
     REWARDS = {
         ObjectType.APPLE: 10,
         ObjectType.GOLDEN: (30, 70),  # random in range
-        ObjectType.POISON: -1000,
+        ObjectType.POISON: -100,
         ObjectType.SOUR: -5,
         ObjectType.ROTTEN: -20,
     }
 
     # Additional rewards
-    DEATH_PENALTY = -1000
+    DEATH_PENALTY = -100
     STEP_PENALTY = -0.1       # penalty per step (stimulates activity)
-    SURVIVAL_BONUS = 0.5      # bonus for surviving
+    SURVIVAL_BONUS = 0.0
 
     @classmethod
     def get_reward(cls, obj_type: ObjectType) -> float:

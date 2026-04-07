@@ -35,6 +35,13 @@ def get_test_config():
             "obstacle_decay": 50,
             "max_steps": 50,
             "observation_type": "features",
+            "starvation_max_steps": -1,
+            "proximity_good_scale": 0.0,
+            "proximity_bad_scale": 0.0,
+            "fruit_reward_length_coef": 0.0,
+            "fruit_penalty_length_coef": 0.0,
+            "death_penalty_length_coef": 0.0,
+            "death_penalty_min_scale": 1.0,
         },
         "agent": {
             "learning_rate": 0.001,

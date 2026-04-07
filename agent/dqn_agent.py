@@ -10,9 +10,31 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from typing import Dict, Optional
+import torchinfo
 
-from .networks import DQN_MLP, DQN_CNN, DuelingDQN
+from .networks import DQN_MLP, DQN_CNN, DQN_CNN_Shallow
 from .replay_buffer import ReplayBuffer, PrioritizedReplayBuffer
+
+
+def _unwrap_compiled_network(module: nn.Module) -> nn.Module:
+    """Return the inner module when ``module`` is a torch.compile() wrapper."""
+    return getattr(module, "_orig_mod", module)
+
+
+def _strip_compile_state_dict_prefix(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """
+    torch.compile checkpoints often prefix parameter names with ``_orig_mod.``.
+    Normalize so the same file loads into eager or compiled networks.
+    """
+    prefix = "_orig_mod."
+    if not state_dict or not any(k.startswith(prefix) for k in state_dict):
+        return state_dict
+    return {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in state_dict.items()}
+
+
+def _load_network_weights(net: nn.Module, state_dict: Dict[str, torch.Tensor]) -> None:
+    state_dict = _strip_compile_state_dict_prefix(state_dict)
+    _unwrap_compiled_network(net).load_state_dict(state_dict)
 
 
 class DQNAgent:
@@ -47,6 +69,16 @@ class DQNAgent:
         use_compile: bool = False,
         pin_memory: bool = True,
         train_steps_per_update: int = 1,
+        lr_cosine_steps: int = 500000,
+        lr_min: float = 1e-6,
+        warmup_steps: int = 0,
+        tau: float = 1.0,
+        sign_log_reward: bool = False,
+        n_step: int = 1,
+        n_frames: int = 1,
+        grid_size: tuple = (15, 15),
+        feature_size: int = 24,
+        network_type: str = "grid",
     ):
         """
         Args:
@@ -58,7 +90,7 @@ class DQNAgent:
             epsilon_decay_steps: steps for epsilon to decay to minimum
             buffer_size: replay buffer size
             batch_size: batch size
-            target_update_freq: target network update frequency
+            target_update_freq: target network update frequency (used only when tau=1.0)
             use_double_dqn: whether to use Double DQN
             use_dueling: whether to use Dueling architecture
             use_prioritized_replay: whether to use PER
@@ -67,6 +99,16 @@ class DQNAgent:
             use_compile: whether to use torch.compile (PyTorch 2.0+)
             pin_memory: whether to use pinned memory for replay buffer
             train_steps_per_update: number of gradient steps per train_step call
+            lr_cosine_steps: T_max for cosine annealing (total training steps)
+            lr_min: minimum learning rate at the end of cosine schedule
+            warmup_steps: minimum buffer size before training begins
+            tau: target network interpolation (1.0 = hard copy, <1 = Polyak averaging)
+            sign_log_reward: if True, use sign(r)*log(1+|r|) reward scaling
+            n_step: number of steps for multi-step returns (1 = standard)
+            n_frames: number of stacked frames (multiplies input channels/features)
+            grid_size: (H, W) of the grid observation
+            feature_size: base feature vector length (before frame stacking)
+            network_type: CNN architecture ("grid" for deep, "grid_shallow" for shallow)
         """
         # Determine device
         if device == "auto":
@@ -85,6 +127,11 @@ class DQNAgent:
         self.target_update_freq = target_update_freq
         self.use_double_dqn = use_double_dqn
         self.train_steps_per_update = train_steps_per_update
+        self.warmup_steps = max(warmup_steps, batch_size)
+        self.tau = tau
+        self.sign_log_reward = sign_log_reward
+        self.n_step = n_step
+        self.n_step_gamma = discount_factor ** n_step
 
         # Epsilon scheduling
         self.epsilon = epsilon_start
@@ -96,17 +143,30 @@ class DQNAgent:
         self.use_amp = use_amp and self.device.type == "cuda"
         self.scaler = torch.amp.GradScaler("cuda") if self.use_amp else None
 
-        # Create networks
+        # Create networks (input dimensions account for frame stacking)
+        self.observation_type = observation_type
+        _CNN_CLASSES = {
+            "grid": DQN_CNN,
+            "grid_shallow": DQN_CNN_Shallow,
+        }
         if observation_type == "features":
-            if use_dueling:
-                self.q_network = DuelingDQN(n_actions=n_actions).to(self.device)
-                self.target_network = DuelingDQN(n_actions=n_actions).to(self.device)
-            else:
-                self.q_network = DQN_MLP(n_actions=n_actions).to(self.device)
-                self.target_network = DQN_MLP(n_actions=n_actions).to(self.device)
+            mlp_input = feature_size * n_frames
+            input_size = (self.batch_size, mlp_input)
+            self.q_network = DQN_MLP(input_size=mlp_input, n_actions=n_actions, use_dueling=use_dueling).to(self.device)
+            self.target_network = DQN_MLP(input_size=mlp_input, n_actions=n_actions, use_dueling=use_dueling).to(self.device)
         else:
-            self.q_network = DQN_CNN(n_actions=n_actions).to(self.device)
-            self.target_network = DQN_CNN(n_actions=n_actions).to(self.device)
+            cnn_channels = 6 * n_frames
+            input_size = (self.batch_size, cnn_channels, *grid_size)
+            cnn_cls = _CNN_CLASSES.get(network_type, DQN_CNN)
+            self.q_network = cnn_cls(input_channels=cnn_channels, grid_size=grid_size, n_actions=n_actions, use_dueling=use_dueling).to(self.device)
+            self.target_network = cnn_cls(input_channels=cnn_channels, grid_size=grid_size, n_actions=n_actions, use_dueling=use_dueling).to(self.device)
+
+        print("Q-network:")
+        print(torchinfo.summary(self.q_network, input_size=input_size, device=self.device))
+        print("*" * 100)
+        print("Target network:")
+        print(torchinfo.summary(self.target_network, input_size=input_size, device=self.device))
+        print("*" * 100)
 
         # Copy weights
         self.target_network.load_state_dict(self.q_network.state_dict())
@@ -119,18 +179,25 @@ class DQNAgent:
             except Exception:
                 pass  # Fall back to eager mode if compile fails
 
-        # Optimizer
+        # Optimizer + cosine LR scheduler
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=learning_rate)
+        self.lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=lr_cosine_steps,
+            eta_min=lr_min,
+        )
 
         # Replay buffer with pinned memory for fast GPU transfers
         use_pin = pin_memory and self.device.type == "cuda"
         if use_prioritized_replay:
             self.replay_buffer = PrioritizedReplayBuffer(
-                capacity=buffer_size, pin_memory=use_pin
+                capacity=buffer_size, pin_memory=use_pin,
+                n_step=n_step, gamma=discount_factor,
             )
         else:
             self.replay_buffer = ReplayBuffer(
-                capacity=buffer_size, pin_memory=use_pin
+                capacity=buffer_size, pin_memory=use_pin,
+                n_step=n_step, gamma=discount_factor,
             )
 
         self.use_prioritized_replay = use_prioritized_replay
@@ -145,9 +212,9 @@ class DQNAgent:
             return np.random.randint(self.n_actions)
 
         with torch.no_grad():
-            state = torch.as_tensor(
-                observation, dtype=torch.float32, device=self.device
-            ).unsqueeze(0)
+            # NumPy arrays + as_tensor(..., device=cuda) can stay on CPU; .to() is reliable.
+            state = torch.as_tensor(observation, dtype=torch.float32).unsqueeze(0)
+            state = state.to(self.device, non_blocking=self.device.type == "cuda")
             q_values = self.q_network(state)
         return q_values.argmax(dim=1).item()
 
@@ -167,9 +234,9 @@ class DQNAgent:
         Performs one or more training steps (controlled by train_steps_per_update).
 
         Returns:
-            Dict with metrics or None if buffer too small
+            Dict with metrics or None if buffer too small or still warming up
         """
-        if len(self.replay_buffer) < self.batch_size:
+        if len(self.replay_buffer) < self.warmup_steps:
             return None
 
         total_loss = 0.0
@@ -197,12 +264,12 @@ class DQNAgent:
             else:
                 states, actions, rewards, next_states, dones, indices, weights = \
                     self.replay_buffer.sample(self.batch_size)
-                weights = torch.as_tensor(weights, dtype=torch.float32, device=self.device)
-                states = torch.as_tensor(states, dtype=torch.float32, device=self.device)
-                actions = torch.as_tensor(actions, dtype=torch.long, device=self.device)
-                rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device)
-                next_states = torch.as_tensor(next_states, dtype=torch.float32, device=self.device)
-                dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device)
+                weights = torch.as_tensor(weights, dtype=torch.float32).to(self.device)
+                states = torch.as_tensor(states, dtype=torch.float32).to(self.device)
+                actions = torch.as_tensor(actions, dtype=torch.long).to(self.device)
+                rewards = torch.as_tensor(rewards, dtype=torch.float32).to(self.device)
+                next_states = torch.as_tensor(next_states, dtype=torch.float32).to(self.device)
+                dones = torch.as_tensor(dones, dtype=torch.float32).to(self.device)
         else:
             if hasattr(self.replay_buffer, 'sample_tensors'):
                 states, actions, rewards, next_states, dones = \
@@ -210,11 +277,11 @@ class DQNAgent:
             else:
                 states, actions, rewards, next_states, dones = \
                     self.replay_buffer.sample(self.batch_size)
-                states = torch.as_tensor(states, dtype=torch.float32, device=self.device)
-                actions = torch.as_tensor(actions, dtype=torch.long, device=self.device)
-                rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device)
-                next_states = torch.as_tensor(next_states, dtype=torch.float32, device=self.device)
-                dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device)
+                states = torch.as_tensor(states, dtype=torch.float32).to(self.device)
+                actions = torch.as_tensor(actions, dtype=torch.long).to(self.device)
+                rewards = torch.as_tensor(rewards, dtype=torch.float32).to(self.device)
+                next_states = torch.as_tensor(next_states, dtype=torch.float32).to(self.device)
+                dones = torch.as_tensor(dones, dtype=torch.float32).to(self.device)
             weights = torch.ones(self.batch_size, device=self.device)
 
         # Forward pass with optional AMP
@@ -232,12 +299,12 @@ class DQNAgent:
         if self.use_amp:
             self.scaler.scale(loss).backward()
             self.scaler.unscale_(self.optimizer)
-            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 10)
+            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0)
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 10)
+            torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), 1.0)
             self.optimizer.step()
 
         # Update priorities in PER
@@ -252,16 +319,29 @@ class DQNAgent:
 
         # Update target network
         self.updates += 1
-        if self.updates % self.target_update_freq == 0:
+        if self.tau < 1.0:
+            q_params = self.q_network.state_dict()
+            t_params = self.target_network.state_dict()
+            for key in t_params:
+                t_params[key] = self.tau * q_params[key] + (1.0 - self.tau) * t_params[key]
+            self.target_network.load_state_dict(t_params)
+        elif self.updates % self.target_update_freq == 0:
             self.target_network.load_state_dict(self.q_network.state_dict())
 
         self.training_steps += 1
+        self.lr_scheduler.step()
 
         return {
             "loss": loss.item(),
             "mean_q": current_q.mean().item(),
             "epsilon": self.epsilon,
+            "lr": self.optimizer.param_groups[0]["lr"],
         }
+
+    def _scale_rewards(self, rewards: torch.Tensor) -> torch.Tensor:
+        if self.sign_log_reward:
+            return torch.sign(rewards) * torch.log1p(torch.abs(rewards))
+        return rewards
 
     def _compute_loss(
         self,
@@ -272,11 +352,9 @@ class DQNAgent:
         dones: torch.Tensor,
         weights: torch.Tensor,
     ):
-        """Computes TD loss in float32."""
-        # Current Q-values
+        """Computes TD loss in float32 using Huber loss."""
         current_q = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
 
-        # Target Q-values
         with torch.no_grad():
             if self.use_double_dqn:
                 next_actions = self.q_network(next_states).argmax(dim=1)
@@ -286,10 +364,11 @@ class DQNAgent:
             else:
                 next_q = self.target_network(next_states).max(dim=1)[0]
 
-            target_q = rewards + self.gamma * next_q * (1 - dones)
+            scaled_rewards = self._scale_rewards(rewards)
+            target_q = scaled_rewards + self.n_step_gamma * next_q * (1 - dones)
 
         td_errors = target_q - current_q
-        loss = (weights * td_errors.pow(2)).mean()
+        loss = (weights * nn.functional.smooth_l1_loss(current_q, target_q, reduction='none')).mean()
 
         return loss, current_q, td_errors
 
@@ -302,7 +381,7 @@ class DQNAgent:
         dones: torch.Tensor,
         weights: torch.Tensor,
     ):
-        """Computes TD loss with automatic mixed precision."""
+        """Computes TD loss with automatic mixed precision using Huber loss."""
         with torch.amp.autocast("cuda"):
             current_q = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
 
@@ -315,13 +394,15 @@ class DQNAgent:
                 else:
                     next_q = self.target_network(next_states).max(dim=1)[0]
 
-                target_q = rewards + self.gamma * next_q * (1 - dones)
+                scaled_rewards = self._scale_rewards(rewards)
+                target_q = scaled_rewards + self.n_step_gamma * next_q * (1 - dones)
 
-            td_errors = target_q - current_q
-            # Compute loss in float32 for numerical stability
-            loss = (weights * td_errors.float().pow(2)).mean()
+            td_errors = (target_q - current_q).float()
+            loss = (weights * nn.functional.smooth_l1_loss(
+                current_q.float(), target_q.float(), reduction='none'
+            )).mean()
 
-        return loss, current_q.float(), td_errors.float()
+        return loss, current_q.float(), td_errors
 
     def _update_epsilon(self):
         """Updates epsilon with linear schedule."""
@@ -331,12 +412,16 @@ class DQNAgent:
     def save(self, path: str):
         """Saves model."""
         save_dict = {
-            "q_network": self.q_network.state_dict(),
-            "target_network": self.target_network.state_dict(),
+            "q_network": _unwrap_compiled_network(self.q_network).state_dict(),
+            "target_network": _unwrap_compiled_network(self.target_network).state_dict(),
             "optimizer": self.optimizer.state_dict(),
+            "lr_scheduler": self.lr_scheduler.state_dict(),
             "epsilon": self.epsilon,
             "training_steps": self.training_steps,
             "updates": self.updates,
+            "n_step": self.n_step,
+            "tau": self.tau,
+            "sign_log_reward": self.sign_log_reward,
         }
         if self.scaler is not None:
             save_dict["scaler"] = self.scaler.state_dict()
@@ -346,9 +431,11 @@ class DQNAgent:
         """Loads model."""
         checkpoint = torch.load(path, map_location=self.device)
 
-        self.q_network.load_state_dict(checkpoint["q_network"])
-        self.target_network.load_state_dict(checkpoint["target_network"])
+        _load_network_weights(self.q_network, checkpoint["q_network"])
+        _load_network_weights(self.target_network, checkpoint["target_network"])
         self.optimizer.load_state_dict(checkpoint["optimizer"])
+        if "lr_scheduler" in checkpoint:
+            self.lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         self.epsilon = checkpoint["epsilon"]
         self.training_steps = checkpoint["training_steps"]
         self.updates = checkpoint["updates"]

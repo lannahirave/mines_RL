@@ -21,7 +21,8 @@ import numpy as np
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from env.snake_env import SnakePlusEnv
+from env.snake_env import make_snake_env
+from env.wrappers import FrameStack
 from env.snake import Direction, Action
 from env.game_objects import ObjectType
 from agent.dqn_agent import DQNAgent
@@ -99,15 +100,20 @@ class Dashboard:
         # Pending manual action
         self._pending_action: int = None
 
-        # Create environment
-        self.env = SnakePlusEnv(
-            grid_size=self.grid_size,
-            spawn_probs=config["env"]["spawn_probs"],
-            max_objects=config["env"]["max_objects"],
-            obstacle_decay=config["env"].get("obstacle_decay"),
-            max_steps=config["env"]["max_steps"],
-            observation_type=config["env"]["observation_type"],
-        )
+        # Channel overlay (None = off, 0-6 = channel index)
+        self._overlay_channel: int = None
+        self._CHANNEL_NAMES = [
+            "Snake", "Good prox.", "Bad prox.",
+            "Danger prox.", "Dir DX", "Dir DY",
+        ]
+
+        # Create environment (with optional frame stacking)
+        self.game_env = make_snake_env(config["env"])
+        self.n_frames = config["agent"].get("n_frames", 1)
+        if self.n_frames > 1:
+            self.env = FrameStack(self.game_env, n_frames=self.n_frames)
+        else:
+            self.env = self.game_env
 
         # Load agent if in observe mode
         if model_path and mode == "observe":
@@ -129,6 +135,8 @@ class Dashboard:
             use_double_dqn=self.config["agent"]["use_double_dqn"],
             use_dueling=self.config["agent"]["use_dueling"],
             use_prioritized_replay=self.config["agent"]["use_prioritized_replay"],
+            n_frames=self.n_frames,
+            grid_size=tuple(self.config["env"]["grid_size"]),
         )
         self.agent.load(self.model_path)
         self.agent.epsilon = 0.0  # greedy
@@ -179,6 +187,8 @@ class Dashboard:
             screen.fill(COLORS["background"])
             self._draw_grid(screen)
             self._draw_game(screen)
+            if self._overlay_channel is not None:
+                self._draw_channel_overlay(screen, font)
             self._draw_panel(screen, font, font_large, current_score, current_steps, done)
 
             pygame.display.flip()
@@ -216,6 +226,13 @@ class Dashboard:
         elif event.key == pygame.K_MINUS:
             self.fps_index = max(self.fps_index - 1, 0)
 
+        # Channel overlay: 1-7 select, 0 or same key toggles off
+        elif pygame.K_1 <= event.key <= pygame.K_6:
+            ch = event.key - pygame.K_1
+            self._overlay_channel = None if self._overlay_channel == ch else ch
+        elif event.key == pygame.K_0:
+            self._overlay_channel = None
+
         # Manual controls (play mode)
         elif self.mode == "play":
             if event.key in (pygame.K_UP, pygame.K_w):
@@ -231,10 +248,10 @@ class Dashboard:
 
     def _direction_to_action(self, target_dir: Direction) -> int:
         """Converts an absolute direction to a relative action."""
-        if self.env.snake is None:
+        if self.game_env.snake is None:
             return Action.FORWARD.value
 
-        current = self.env.snake.direction
+        current = self.game_env.snake.direction
         if target_dir == current:
             return Action.FORWARD.value
 
@@ -284,11 +301,11 @@ class Dashboard:
 
     def _draw_game(self, screen: pygame.Surface) -> None:
         """Draws snake, objects, and obstacles."""
-        if self.env.snake is None:
+        if self.game_env.snake is None:
             return
 
         # Obstacles
-        for obs in self.env.obstacles:
+        for obs in self.game_env.obstacles:
             self._draw_cell(screen, obs.x, obs.y, COLORS["obstacle"])
 
         # Objects
@@ -299,7 +316,7 @@ class Dashboard:
             ObjectType.SOUR: COLORS["sour"],
             ObjectType.ROTTEN: COLORS["rotten"],
         }
-        for obj in self.env.objects:
+        for obj in self.game_env.objects:
             cx = obj.x * self.CELL_SIZE + self.CELL_SIZE // 2
             cy = obj.y * self.CELL_SIZE + self.CELL_SIZE // 2
             radius = self.CELL_SIZE // 2 - 4
@@ -310,13 +327,63 @@ class Dashboard:
                 pygame.draw.circle(screen, (255, 255, 200), (cx - 3, cy - 3), 3)
 
         # Snake body
-        for i, (x, y) in enumerate(self.env.snake.body):
+        for i, (x, y) in enumerate(self.game_env.snake.body):
             if i == 0:
                 self._draw_cell(screen, x, y, COLORS["snake_head"])
             else:
-                ratio = i / max(len(self.env.snake.body), 1)
+                ratio = i / max(len(self.game_env.snake.body), 1)
                 color = self._lerp_color(COLORS["snake_body"], (0, 100, 50), ratio)
                 self._draw_cell(screen, x, y, color)
+
+    def _draw_channel_overlay(self, screen: pygame.Surface, font: pygame.font.Font) -> None:
+        """Draws a heatmap overlay of the selected grid observation channel."""
+        if self.game_env.snake is None:
+            return
+
+        obs = self.game_env._get_grid_observation()
+        ch = self._overlay_channel
+        if ch >= obs.shape[0]:
+            return
+
+        layer = obs[ch]
+        vmin, vmax = float(layer.min()), float(layer.max())
+
+        overlay = pygame.Surface((self.grid_w, self.grid_h), pygame.SRCALPHA)
+        num_font = pygame.font.Font(None, 16)
+        W, H = self.grid_size
+
+        for gy in range(H):
+            for gx in range(W):
+                val = float(layer[gy, gx])
+
+                t = (val - vmin) / (vmax - vmin) if vmax > vmin else 0.0
+
+                r = int(255 * t)
+                g = int(80 * (1 - t))
+                b = int(220 * (1 - t))
+                alpha = int(40 + 140 * t)
+
+                rect = pygame.Rect(
+                    gx * self.CELL_SIZE, gy * self.CELL_SIZE,
+                    self.CELL_SIZE, self.CELL_SIZE,
+                )
+                pygame.draw.rect(overlay, (r, g, b, alpha), rect)
+
+                if val != 0.0:
+                    txt = f"{val:.2f}" if abs(val) < 10 else f"{val:.1f}"
+                    txt_surf = num_font.render(txt, True, (255, 255, 255))
+                    tx = gx * self.CELL_SIZE + (self.CELL_SIZE - txt_surf.get_width()) // 2
+                    ty = gy * self.CELL_SIZE + (self.CELL_SIZE - txt_surf.get_height()) // 2
+                    overlay.blit(txt_surf, (tx, ty))
+
+        screen.blit(overlay, (0, 0))
+
+        name = self._CHANNEL_NAMES[ch] if ch < len(self._CHANNEL_NAMES) else f"Ch {ch}"
+        label = f"Ch {ch}: {name}  [{vmin:.3f} .. {vmax:.3f}]"
+        label_surf = font.render(label, True, (255, 255, 100))
+        bg_rect = pygame.Rect(4, 4, label_surf.get_width() + 8, label_surf.get_height() + 4)
+        pygame.draw.rect(screen, (0, 0, 0, 200), bg_rect, border_radius=3)
+        screen.blit(label_surf, (8, 6))
 
     def _draw_cell(self, screen, x, y, color, margin=2):
         """Draws a single grid cell."""
@@ -365,8 +432,8 @@ class Dashboard:
         lines = [
             ("Score:", str(score)),
             ("Steps:", str(steps)),
-            ("Length:", str(self.env.snake.length if self.env.snake else 0)),
-            ("Obstacles:", str(len(self.env.obstacles))),
+            ("Length:", str(self.game_env.snake.length if self.game_env.snake else 0)),
+            ("Obstacles:", str(len(self.game_env.obstacles))),
         ]
         for label, val in lines:
             surf = font.render(f"{label} {val}", True, COLORS["text"])
@@ -419,6 +486,8 @@ class Dashboard:
             "+/- - Speed",
             "R - Reset",
             "M - Toggle mode",
+            "1-6 - Channel overlay",
+            "0 - Overlay off",
             "ESC - Quit",
         ]
         if self.mode == "play":
@@ -427,6 +496,11 @@ class Dashboard:
                 "Arrow keys / WASD",
                 "to move snake",
             ]
+
+        if self._overlay_channel is not None:
+            ch = self._overlay_channel
+            name = self._CHANNEL_NAMES[ch] if ch < len(self._CHANNEL_NAMES) else f"Ch {ch}"
+            controls += ["", f"Overlay: {name}"]
 
         for line in controls:
             surf = font.render(line, True, COLORS["text"])

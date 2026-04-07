@@ -21,7 +21,7 @@ Run a single test file:
 ## Architecture
 
 - `env/` — Gymnasium environment (`SnakePlusEnv`), snake physics, game objects with factory pattern, Pygame renderer
-- `agent/` — `QTableAgent` (tabular Q-learning) and `DQNAgent` (Deep Q-Network with Double DQN, Dueling, PER options), neural networks (`DQN_MLP`, `DQN_CNN`, `DuelingDQN`), replay buffers
+- `agent/` — `QTableAgent` (tabular Q-learning) and `DQNAgent` (Deep Q-Network with Double DQN, Dueling, PER options), neural networks (`DQN_MLP`, `DQN_CNN`), replay buffers
 - `training/` — Single entry point `train_dqn.py` with argparse CLI, loads YAML config, runs training loop with periodic evaluation and checkpointing
 - `configs/` — YAML files with three sections: `env`, `agent`, `training`
 - `tests/` — pytest-based, one test class per component, uses `setup_method()` for initialization
@@ -43,13 +43,14 @@ Run a single test file:
 - Agent interface: `select_action(obs, training=bool)`, `store_transition(...)`, `train_step()`
 - `training=True` uses epsilon-greedy exploration, `training=False` uses greedy action selection
 - DQN agent auto-selects CUDA if available, falls back to CPU
-- Two observation types: `"features"` (18-dim vector for MLP/Q-table) and `"grid"` (8-channel tensor for CNN)
+- Two observation types: `"features"` (18-dim vector for MLP/Q-table) and `"grid"` (9-channel tensor for CNN: head, decayed body, tail, five object types, obstacle)
 - Training outputs go to `results/runs/<timestamp>/` with model checkpoints, metrics, config copy, and plots
 
 ## Configuration
 
 All hyperparameters live in `configs/training.yaml`. Three sections:
-- `env`: grid_size, spawn_probs, max_objects, obstacle_decay, max_steps, observation_type
+
+- `env`: grid_size, spawn_probs, max_objects, obstacle_decay, max_steps, observation_type, starvation_max_steps, proximity_good_scale, proximity_bad_scale, fruit/death length-scaling coefs (`make_snake_env` builds `SnakePlusEnv` from YAML)
 - `agent`: learning_rate, discount_factor, epsilon schedule, buffer_size, batch_size, target_update_freq, toggles for double_dqn/dueling/prioritized_replay
 - `training`: n_episodes, eval_freq, save_freq, seed
 

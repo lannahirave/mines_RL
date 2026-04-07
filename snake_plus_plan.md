@@ -82,7 +82,7 @@
 - Discrete(3) action space (forward, turn left, turn right)
 - Два типи спостережень:
   - `"features"` — 18-dim вектор: danger (3), direction one-hot (4), food direction (4), nearest object type one-hot (5), distance to food (1), snake length (1)
-  - `"grid"` — 8-channel tensor (8 × height × width): head, body, apple, golden, poison, sour, rotten, obstacle
+  - `"grid"` — 9-channel tensor (9 × height × width): head, body (decayed along segment index), tail, apple, golden, poison, sour, rotten, obstacle
 - Повний step() з обробкою колізій (стіни, тіло, перешкоди, об'єкти), obstacle decay, object spawning
 - reset() з ініціалізацією змійки в центрі поля
 
@@ -120,7 +120,6 @@
 
 - **DQN_MLP** — Multi-layer perceptron для feature-based спостережень (18 → hidden layers → 3 actions), з Dropout(0.1)
 - **DQN_CNN** — CNN для grid-based спостережень (Conv2d layers → FC → 3 actions)
-- **DuelingDQN** — Dueling архітектура: shared features → Value stream + Advantage stream → Q = V + A - mean(A)
 
 ### 2.4 dqn_agent.py
 
@@ -135,6 +134,7 @@
 - save/load checkpoints (q_network, target_network, optimizer, epsilon, steps)
 
 Виправлені помилки:
+
 - Dropout під час inference в select_action() (eval mode)
 - Dropout в train_step для target network
 - Off-by-one в obstacle lifetime decay
@@ -162,6 +162,7 @@
 ### training.yaml
 
 Три секції:
+
 - **env**: grid_size [15,15], spawn_probs, max_objects 5, obstacle_decay 50, max_steps 1000, observation_type "features"
 - **agent**: learning_rate 0.0001, discount_factor 0.99, epsilon schedule (1.0→0.01 за 50000 кроків), buffer_size 100000, batch_size 64, target_update_freq 1000, double_dqn on, dueling off, PER off
 - **training**: n_episodes 10000, eval_freq 500, save_freq 1000
@@ -183,6 +184,7 @@
 ## Виконаний чекліст
 
 ### Фаза 1: Базова структура
+
 - [x] Створити структуру папок
 - [x] Написати `requirements.txt`
 - [x] Реалізувати `game_objects.py` — ObjectType (6 типів), GameObject, ObjectFactory, RewardCalculator
@@ -190,14 +192,16 @@
 - [x] Написати unit-тести для game logic — test_game_logic.py (24+ тестів)
 
 ### Фаза 2: Середовище
-- [x] Реалізувати `snake_env.py` — Gymnasium env, Discrete(3) actions, feature (18-dim) та grid (8×15×15) observations
+
+- [x] Реалізувати `snake_env.py` — Gymnasium env, Discrete(3) actions, feature (18-dim) та grid (9×15×15) observations
 - [x] Реалізувати `renderer.py` — Pygame візуалізація з кольоровими об'єктами, info panel, human/rgb_array modes
 - [x] Протестувати середовище з випадковим агентом — test_env.py (13+ тестів)
 
 ### Фаза 3: Агенти
+
 - [x] Реалізувати `q_table_agent.py` — табличний Q-learning, ε-greedy, discretization, save/load
 - [x] Реалізувати `replay_buffer.py` — ReplayBuffer + PrioritizedReplayBuffer з importance sampling
-- [x] Реалізувати `networks.py` — DQN_MLP, DQN_CNN, DuelingDQN архітектури
+- [x] Реалізувати `networks.py` — DQN_MLP, DQN_CNN архітектури
 - [x] Реалізувати `dqn_agent.py` — Double DQN, target network, PER, gradient clipping, CUDA support
 - [x] Написати unit-тести для агентів — test_agent.py (10+ тестів)
 - [x] Виправлено dropout під час inference в select_action()
@@ -205,6 +209,7 @@
 - [x] Виправлено off-by-one помилку в obstacle lifetime decay
 
 ### Фаза 4: Навчання
+
 - [x] Написати `train_dqn.py` — CLI з --config, metric logging, checkpointing
 - [x] Створити конфіги — training.yaml, default_env.yaml
 - [x] Написати README.md
@@ -214,13 +219,16 @@
 ## TODO
 
 ### Реєстрація середовища
+
 - [x] Зареєструвати SnakePlusEnv в Gymnasium (через `gymnasium.register()`) — `env/__init__.py`, id="SnakePlus-v0"
 
 ### Навчання та тюнінг
+
 - [ ] Запустити перше навчання DQN агента
 - [ ] Налаштувати гіперпараметри (learning rate, epsilon schedule, buffer size, тощо)
 
 ### Експерименти (experiments/)
+
 - [x] Реалізувати `discount_analysis.py` — дослідження впливу коефіцієнта дисконтування (γ) на стратегію агента
   - Запуск навчання з різними γ (0.1, 0.5, 0.9, 0.99, 0.999)
   - Збір метрик: mean score, survival steps, death by obstacle rate, survival rate, final length
@@ -229,6 +237,7 @@
 - [ ] Задокументувати результати
 
 ### Візуалізація (visualization/)
+
 - [x] Реалізувати `dashboard.py` — інтерактивний Pygame дашборд
   - Два режими: спостереження за агентом / гра вручну
   - Панель статистики (episodes, best/avg score, length, obstacles)
@@ -237,4 +246,5 @@
 - [ ] Записати відео демонстрації
 
 ### Документація та звіт
+
 - [ ] Підготувати фінальний звіт з результатами експериментів

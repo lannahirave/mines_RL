@@ -25,6 +25,7 @@ The project implements two agent types:
 **Q-Table Agent** — A tabular Q-learning agent that discretizes the 18-dimensional feature observation space. Best suited for quick experimentation and baseline comparisons.
 
 **DQN Agent** — A Deep Q-Network agent with support for several advanced techniques:
+
 - Double DQN to reduce Q-value overestimation
 - Dueling network architecture to separately estimate state value and action advantages
 - Prioritized Experience Replay (PER) to focus training on high-error transitions
@@ -39,7 +40,7 @@ The environment provides two observation formats:
 
 **Features** — An 18-dimensional vector containing danger signals in three directions, the snake's current direction (one-hot), food direction indicators, nearest object type (one-hot), distance to the nearest food, and normalized snake length. Used with Q-Table and MLP-based DQN agents.
 
-**Grid** — An 8-channel 15x15 tensor with separate binary channels for the snake head, body, and each object type (apple, golden, poison, sour, rotten, obstacle). Used with CNN-based DQN agents.
+**Grid** — A 9-channel 15×15 tensor: head, body (per-segment decay toward the tail), tail, then apple, golden, poison, sour, rotten, and obstacle. Used with CNN-based DQN agents.
 
 ## Project Structure
 
@@ -55,7 +56,7 @@ The environment provides two observation formats:
 
 All training and environment parameters are controlled via YAML config files in `configs/`. The main config file is `configs/training.yaml`, which defines:
 
-- **Environment settings**: grid size, object spawn probabilities, max objects on the field, obstacle decay rate, max steps per episode, and observation type
+- **Environment settings**: grid size, spawn probabilities, max objects, obstacle decay, max steps, observation type, optional starvation limit, proximity shaping toward food/hazards, and length-based scaling of eat rewards and death penalties (see `configs/training.yaml` and `TRAINING_GUIDE.md`)
 - **Agent hyperparameters**: learning rate, discount factor, epsilon schedule, replay buffer size, batch size, target network update frequency, and toggles for Double DQN / Dueling / PER
 - **Training settings**: number of episodes, evaluation frequency, checkpoint save frequency, and random seed
 
@@ -86,6 +87,7 @@ To use a custom config:
     uv run python -m training.train_dqn --config configs/my_custom_config.yaml
 
 Training outputs are saved to `results/runs/<timestamp>/` and include:
+
 - Model checkpoints saved at regular intervals
 - A final model file (`model_final.pt`)
 - Training metrics (`metrics.npz`)

@@ -27,7 +27,7 @@ import random
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
-from env.snake_env import SnakePlusEnv
+from env.snake_env import SnakePlusEnv, make_snake_env
 from env.game_objects import ObjectType
 from agent.dqn_agent import DQNAgent
 
@@ -46,14 +46,7 @@ def set_seed(seed: int) -> None:
 
 def create_env(config: dict) -> SnakePlusEnv:
     """Creates environment from config."""
-    return SnakePlusEnv(
-        grid_size=tuple(config["env"]["grid_size"]),
-        spawn_probs=config["env"]["spawn_probs"],
-        max_objects=config["env"]["max_objects"],
-        obstacle_decay=config["env"].get("obstacle_decay"),
-        max_steps=config["env"]["max_steps"],
-        observation_type=config["env"]["observation_type"],
-    )
+    return make_snake_env(config["env"])
 
 
 def train_with_gamma(

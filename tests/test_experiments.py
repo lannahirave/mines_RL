@@ -35,6 +35,13 @@ def get_test_config():
             "obstacle_decay": 50,
             "max_steps": 50,
             "observation_type": "features",
+            "starvation_max_steps": -1,
+            "proximity_good_scale": 0.0,
+            "proximity_bad_scale": 0.0,
+            "fruit_reward_length_coef": 0.0,
+            "fruit_penalty_length_coef": 0.0,
+            "death_penalty_length_coef": 0.0,
+            "death_penalty_min_scale": 1.0,
         },
         "agent": {
             "learning_rate": 0.001,
@@ -70,7 +77,7 @@ class TestCreateEnv:
         config = get_test_config()
         env = create_env(config)
         obs, info = env.reset()
-        assert obs.shape == (18,)
+        assert obs.shape == (24,)
         obs, reward, term, trunc, info = env.step(0)
         assert isinstance(reward, float)
         env.close()

@@ -10,6 +10,16 @@ spawn_probs:
   rotten: 0.10
 
 max_objects: 5
-obstacle_decay: 50  # null for permanent obstacles
+obstacle_decay: 50 # null for permanent obstacles
 max_steps: 1000
-observation_type: "features"  # "features" or "grid"
+observation_type: "features" # "features" or "grid"
+
+starvation_max_steps: 400 # -1 disables
+proximity_good_scale: 0.01
+proximity_bad_scale: 0.001
+fruit_reward_length_coef: 0.5
+fruit_penalty_length_coef: 0.5
+fruit_penalty_min_factor: 0.25
+death_penalty_length_coef: 0.5
+death_penalty_min_scale: 0.35
+object_lifetime: 100 # steps before uneaten objects despawn (-1 = permanent)

@@ -18,7 +18,7 @@ Verify the setup:
 uv run python -m pytest tests/ -v
 ```
 
-All 80 tests should pass.
+All tests in `tests/` should pass.
 
 ## 1. Basic DQN Training
 
@@ -55,10 +55,18 @@ uv run python -m training.train_dqn --config configs/my_config.yaml
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `grid_size` | [15, 15] | Width and height of the game grid |
-| `observation_type` | "features" | "features" (18-dim vector, MLP) or "grid" (8-channel tensor, CNN) |
+| `observation_type` | "features" | "features" (18-dim vector, MLP) or "grid" (9-channel tensor, CNN) |
 | `max_objects` | 5 | Maximum objects on the field at once |
 | `obstacle_decay` | 50 | Steps until rotten-fruit obstacles disappear |
 | `max_steps` | 1000 | Episode truncation limit |
+| `starvation_max_steps` | 400 | Terminate if no object eaten for this many steps in a row; `-1` disables |
+| `proximity_good_scale` | 0.01 | Dense reward for moving closer to nearest apple/golden (Manhattan); `0` off |
+| `proximity_bad_scale` | 0.004 | Penalty for moving closer to nearest poison/sour/rotten; `0` off |
+| `fruit_reward_length_coef` | 0.5 | Positive eat rewards scale by `1 + coef × (length / grid cells)` |
+| `fruit_penalty_length_coef` | 0.5 | Negative eat rewards scale by `max(min_factor, 1 − coef × (length / grid cells))` |
+| `fruit_penalty_min_factor` | 0.25 | Floor on the penalty multiplier (keeps bad fruit painful at long length) |
+| `death_penalty_length_coef` | 0.5 | Death penalty scales by `max(min_scale, 1 − coef × (length / grid cells))` |
+| `death_penalty_min_scale` | 0.35 | Minimum fraction of the base death penalty |
 
 **Agent** (`agent` section):
 | Parameter | Default | Description |

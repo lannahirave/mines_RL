@@ -20,22 +20,22 @@ env:
   fruit_penalty_min_factor: 0.25
   death_penalty_length_coef: 0.5
   death_penalty_min_scale: 0.35
-  object_lifetime: 100 # steps before uneaten objects despawn (-1 = permanent)
+  object_lifetime: 50 # steps before uneaten objects despawn (-1 = permanent)
 
 agent:
-  learning_rate: 0.00005
+  learning_rate: 0.0005
   discount_factor: 0.99
-  epsilon_start: 1.0
+  epsilon_start: 0.99
   epsilon_end: 0.05
   epsilon_decay_steps: 500000
   buffer_size: 200000
-  batch_size: 256
-  target_update_freq: 2000
+  batch_size: 1024
+  target_update_freq: 1000
   use_double_dqn: true
   use_dueling: true
   use_prioritized_replay: true
-  lr_cosine_steps: 500000 # T_max for cosine annealing (match training horizon)
-  lr_min: 0.000001 # minimum LR at end of cosine schedule
+  lr_cosine_steps: 400000
+  lr_min: 0.000001
   warmup_steps: 0 # min buffer size before training starts (0 = use batch_size)
   tau: 1.0 # target network interpolation (1.0 = hard copy, <1 = Polyak)
   sign_log_reward: false # sign(r)*log(1+|r|) reward scaling
@@ -44,13 +44,13 @@ agent:
 
 training:
   n_episodes: 20000
-  eval_freq: 1500
-  save_freq: 3000
+  eval_freq: 1000
+  save_freq: 2000
   seed: 42
 
 # GPU optimization settings
 gpu:
-  device: "auto" # "auto", "cuda", "mps", or "cpu"
+  device: "cpu" # "auto", "cuda", "mps", or "cpu"
   use_amp: true # Automatic mixed precision (uses tensor cores)
   use_compile: true # torch.compile - enable for PyTorch 2.0+ (small overhead on first run)
   pin_memory: true # Pinned memory for async CPU→GPU transfers
