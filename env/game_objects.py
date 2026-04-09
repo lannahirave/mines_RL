@@ -127,13 +127,13 @@ class RewardCalculator:
     REWARDS = {
         ObjectType.APPLE: 10,
         ObjectType.GOLDEN: (30, 70),  # random in range
-        ObjectType.POISON: -100,
+        ObjectType.POISON: -500,
         ObjectType.SOUR: -5,
         ObjectType.ROTTEN: -20,
     }
 
     # Additional rewards
-    DEATH_PENALTY = -100
+    DEATH_PENALTY = -500
     STEP_PENALTY = -0.1       # penalty per step (stimulates activity)
     SURVIVAL_BONUS = 0.0
 

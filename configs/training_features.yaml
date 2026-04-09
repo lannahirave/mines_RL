@@ -34,13 +34,14 @@ agent:
   use_double_dqn: true
   use_dueling: true
   use_prioritized_replay: true
-  lr_cosine_steps: 400000
+  lr_cosine_steps: 2000000 # T_max for cosine annealing (~20K eps * ~100 steps avg)
   lr_min: 0.000001
   warmup_steps: 0 # min buffer size before training starts (0 = use batch_size)
   tau: 1.0 # target network interpolation (1.0 = hard copy, <1 = Polyak)
   sign_log_reward: false # sign(r)*log(1+|r|) reward scaling
   n_step: 1 # multi-step returns (1 = standard TD)
   n_frames: 1 # observation frame stacking (1 = no stacking)
+  per_beta_frames: 2000000 # steps for PER beta to anneal from beta_start to 1.0
 
 training:
   n_episodes: 20000

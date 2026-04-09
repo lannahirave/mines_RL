@@ -43,7 +43,7 @@ Run a single test file:
 - Agent interface: `select_action(obs, training=bool)`, `store_transition(...)`, `train_step()`
 - `training=True` uses epsilon-greedy exploration, `training=False` uses greedy action selection
 - DQN agent auto-selects CUDA if available, falls back to CPU
-- Two observation types: `"features"` (18-dim vector for MLP/Q-table) and `"grid"` (9-channel tensor for CNN: head, decayed body, tail, five object types, obstacle)
+- Two observation types: `"features"` (29-dim vector for MLP/Q-table) and `"grid"` (6-channel tensor for CNN: snake body decay, good-object proximity field, bad-object proximity field, danger proximity field, direction dx/dy)
 - Training outputs go to `results/runs/<timestamp>/` with model checkpoints, metrics, config copy, and plots
 
 ## Configuration
@@ -56,9 +56,9 @@ All hyperparameters live in `configs/training.yaml`. Three sections:
 
 ## Rewards
 
-- Apple: +10, Golden: +30-70, Sour: -5, Rotten: -20, Poison: -1000
-- Wall/body/obstacle collision: -1000
-- Step penalty: -0.1, Survival bonus: +0.01 per step
+- Apple: +10, Golden: +30-70, Sour: -5, Rotten: -20, Poison: -500
+- Wall/body/obstacle collision: -500 (scaled down by length; minimum 35% of base)
+- Step penalty: -0.1, Survival bonus: +0.0 per step
 
 ## Testing
 

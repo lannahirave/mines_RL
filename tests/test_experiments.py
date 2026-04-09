@@ -77,7 +77,7 @@ class TestCreateEnv:
         config = get_test_config()
         env = create_env(config)
         obs, info = env.reset()
-        assert obs.shape == (24,)
+        assert obs.shape == (29,)
         obs, reward, term, trunc, info = env.step(0)
         assert isinstance(reward, float)
         env.close()

@@ -77,8 +77,9 @@ class DQNAgent:
         n_step: int = 1,
         n_frames: int = 1,
         grid_size: tuple = (15, 15),
-        feature_size: int = 24,
+        feature_size: int = 29,
         network_type: str = "grid",
+        per_beta_frames: int = 100000,
     ):
         """
         Args:
@@ -109,6 +110,7 @@ class DQNAgent:
             grid_size: (H, W) of the grid observation
             feature_size: base feature vector length (before frame stacking)
             network_type: CNN architecture ("grid" for deep, "grid_shallow" for shallow)
+            per_beta_frames: steps over which PER beta anneals from beta_start to 1.0
         """
         # Determine device
         if device == "auto":
@@ -193,6 +195,7 @@ class DQNAgent:
             self.replay_buffer = PrioritizedReplayBuffer(
                 capacity=buffer_size, pin_memory=use_pin,
                 n_step=n_step, gamma=discount_factor,
+                beta_frames=per_beta_frames,
             )
         else:
             self.replay_buffer = ReplayBuffer(

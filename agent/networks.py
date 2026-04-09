@@ -20,8 +20,8 @@ class DQN_MLP(nn.Module):
 
     def __init__(
         self,
-        input_size: int = 24,
-        hidden_sizes: Tuple[int, ...] = (128, 128),
+        input_size: int = 29,
+        hidden_sizes: Tuple[int, ...] = (256, 256, 128),
         n_actions: int = 3,
         use_dueling: bool = False,
     ):

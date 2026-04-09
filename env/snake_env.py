@@ -137,7 +137,7 @@ class SnakePlusEnv(gym.Env):
 
         # Observation space
         if observation_type == "features":
-            # 24-dim feature vector (all relative to snake heading)
+            # 29-dim feature vector (all relative to snake heading)
             # [0-2]   danger forward/left/right (same order as Action: 0=FWD,1=LEFT,2=RIGHT)
             # [3-5]   food forward/left/right (relative)
             # [6]     food distance (normalized)
@@ -146,8 +146,13 @@ class SnakePlusEnv(gym.Env):
             # [11-14] clear steps forward/left/right/behind until wall, body, or obstacle
             # [15-18] direction one-hot (up/down/left/right)
             # [19-23] nearest object type one-hot (apple/golden/poison/sour/rotten)
+            # [24]    snake length (normalized by grid area)
+            # [25]    starvation countdown (1.0=just ate, 0.0=about to starve; 1.0 if disabled)
+            # [26]    good objects on board (normalized by max_objects)
+            # [27]    bad objects on board (normalized by max_objects)
+            # [28]    obstacles on board (normalized by grid area)
             self.observation_space = spaces.Box(
-                low=0, high=1, shape=(24,), dtype=np.float32
+                low=0, high=1, shape=(29,), dtype=np.float32
             )
         else:  # "grid"
             # 6-channel grid for CNN (dense distance-field encoding)
@@ -202,6 +207,8 @@ class SnakePlusEnv(gym.Env):
 
     def _death_length_scale(self) -> float:
         nl = self._norm_length(self.snake.length)
+        if nl >= 1.0 / 3.0:
+            return 0.0
         return max(
             self.death_penalty_min_scale,
             1.0 - self.death_penalty_length_coef * nl,
@@ -516,7 +523,7 @@ class SnakePlusEnv(gym.Env):
 
     def _get_feature_observation(self) -> np.ndarray:
         """
-        Generates 24-dim feature vector with all spatial info relative to heading.
+        Generates 29-dim feature vector with all spatial info relative to heading.
 
         Layout:
         [0-2]   danger forward / left / right (indices match Action enum)
@@ -528,8 +535,13 @@ class SnakePlusEnv(gym.Env):
             (normalized by max grid dimension)
         [15-18] direction one-hot (up / down / left / right)
         [19-23] nearest object type one-hot
+        [24]    snake length (normalized by grid area)
+        [25]    starvation countdown (1.0=just ate, 0.0=about to starve; 1.0 if disabled)
+        [26]    good objects on board (normalized by max_objects)
+        [27]    bad objects on board (normalized by max_objects)
+        [28]    obstacles on board (normalized by grid area)
         """
-        features = np.zeros(24, dtype=np.float32)
+        features = np.zeros(29, dtype=np.float32)
 
         head = self.snake.head
         direction = self.snake.direction
@@ -596,6 +608,24 @@ class SnakePlusEnv(gym.Env):
                 ObjectType.POISON: 21, ObjectType.SOUR: 22, ObjectType.ROTTEN: 23,
             }
             features[type_idx[nearest_obj.object_type]] = self._object_intensity(nearest_obj)
+
+        # [24] Snake length normalized by grid area
+        features[24] = self.snake.length / self._grid_cell_count()
+
+        # [25] Starvation countdown: 1.0 = just ate / disabled, 0.0 = about to starve
+        if self.starvation_max_steps > 0:
+            features[25] = 1.0 - (self._steps_since_food / self.starvation_max_steps)
+        else:
+            features[25] = 1.0
+
+        # [26-27] Object counts normalized by max_objects
+        good_count = sum(1 for o in self.objects if o.object_type in self._GOOD_TYPES)
+        bad_count = sum(1 for o in self.objects if o.object_type in self._BAD_TYPES)
+        features[26] = good_count / max(1, self.max_objects)
+        features[27] = bad_count / max(1, self.max_objects)
+
+        # [28] Obstacle count normalized by grid area
+        features[28] = len(self.obstacles) / self._grid_cell_count()
 
         return features
 

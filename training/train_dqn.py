@@ -111,6 +111,7 @@ def train(config: dict):
         n_frames=n_frames,
         grid_size=tuple(config["env"]["grid_size"]),
         network_type=config["agent"].get("network_type", "grid"),
+        per_beta_frames=config["agent"].get("per_beta_frames", 100000),
     )
 
     print(f"Device: {agent.device}")
@@ -237,8 +238,9 @@ def evaluate(agent: DQNAgent, config: dict, n_episodes: int = 100) -> dict:
     lengths = []
     steps = []
 
-    for _ in range(n_episodes):
-        state, info = env.reset()
+    eval_seed = config["training"].get("seed", 0)
+    for ep in range(n_episodes):
+        state, info = env.reset(seed=eval_seed + ep)
         done = False
 
         while not done:

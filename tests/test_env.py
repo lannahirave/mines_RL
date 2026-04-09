@@ -36,7 +36,7 @@ class TestSnakePlusEnv:
 
     def test_reset_returns_correct_shape(self):
         obs, info = self.env.reset(seed=42)
-        assert obs.shape == (24,)
+        assert obs.shape == (29,)
         assert isinstance(info, dict)
 
     def test_reset_info_keys(self):
@@ -51,7 +51,7 @@ class TestSnakePlusEnv:
     def test_step_returns_correct_tuple(self):
         self.env.reset(seed=42)
         obs, reward, terminated, truncated, info = self.env.step(0)
-        assert obs.shape == (24,)
+        assert obs.shape == (29,)
         assert isinstance(reward, float)
         assert isinstance(terminated, bool)
         assert isinstance(truncated, bool)
@@ -61,7 +61,7 @@ class TestSnakePlusEnv:
         assert self.env.action_space.n == 3
 
     def test_observation_space_features(self):
-        assert self.env.observation_space.shape == (24,)
+        assert self.env.observation_space.shape == (29,)
 
     def test_observation_space_grid(self):
         env = SnakePlusEnv(
@@ -221,6 +221,42 @@ class TestStarvationAndShaping:
         env.step(0)
         _, _, _, _, info = env.step(0)
         assert info["steps_since_food"] == 2
+
+    def test_death_penalty_zero_at_one_third_grid(self):
+        """Death penalty must be 0 when snake length >= grid_cells / 3."""
+        # 3x3 grid = 9 cells; threshold = 3 segments
+        env = SnakePlusEnv(
+            grid_size=(3, 3),
+            max_objects=0,
+            max_steps=500,
+            starvation_max_steps=-1,
+            **_neutral_reward_modifiers(),
+        )
+        env.reset(seed=0)
+        # Force snake length to exactly the threshold (3 segments on a 3x3 grid)
+        from collections import deque
+        env.snake.body = deque([(1, 1), (0, 1), (0, 0)])
+        env.snake._body_set = None
+        assert env.snake.length == 3  # == 9 / 3
+        assert env._death_length_scale() == 0.0
+        assert env._death_penalty() == 0.0
+
+    def test_death_penalty_nonzero_below_threshold(self):
+        """Death penalty must be nonzero when snake length < grid_cells / 3."""
+        env = SnakePlusEnv(
+            grid_size=(3, 3),
+            max_objects=0,
+            max_steps=500,
+            starvation_max_steps=-1,
+            **_neutral_reward_modifiers(),
+        )
+        env.reset(seed=0)
+        from collections import deque
+        env.snake.body = deque([(1, 1), (0, 1)])  # length=2, threshold=3
+        env.snake._body_set = None
+        assert env.snake.length == 2  # < 9 / 3
+        assert env._death_length_scale() > 0.0
+        assert env._death_penalty() < 0.0
 
     def test_default_constructor_enables_starvation_and_shaping(self):
         env = SnakePlusEnv(grid_size=(5, 5), max_objects=0, max_steps=30)

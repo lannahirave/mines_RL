@@ -69,7 +69,7 @@ class TestRewardCalculator:
         assert all(30 <= r <= 70 for r in rewards)
 
     def test_poison_reward(self):
-        assert RewardCalculator.get_reward(ObjectType.POISON) == -100
+        assert RewardCalculator.get_reward(ObjectType.POISON) == -500
 
     def test_sour_reward(self):
         assert RewardCalculator.get_reward(ObjectType.SOUR) == -5
