@@ -137,6 +137,7 @@ class Dashboard:
             use_prioritized_replay=self.config["agent"]["use_prioritized_replay"],
             n_frames=self.n_frames,
             grid_size=tuple(self.config["env"]["grid_size"]),
+            network_type=self.config["agent"].get("network_type", "grid"),
         )
         self.agent.load(self.model_path)
         self.agent.epsilon = 0.0  # greedy
