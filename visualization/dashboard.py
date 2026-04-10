@@ -87,10 +87,12 @@ class Dashboard:
         config: dict,
         model_path: str = None,
         mode: str = "observe",
+        show_start_button: bool = False,
     ):
         self.config = config
         self.model_path = model_path
         self.mode = mode
+        self.show_start_button = show_start_button
 
         # Grid dimensions
         self.grid_size = tuple(config["env"]["grid_size"])
@@ -102,7 +104,8 @@ class Dashboard:
         self.window_h = self.grid_h
 
         # Game state
-        self.paused = False
+        self.paused = show_start_button
+        self._start_button_rect: pygame.Rect = None
         self.fps_index = 1  # default 10 FPS
         self.episode_count = 0
         self.best_score = 0
@@ -187,6 +190,14 @@ class Dashboard:
                             current_score, current_steps
                         )
                     )
+
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if (
+                        self.show_start_button
+                        and self._start_button_rect is not None
+                        and self._start_button_rect.collidepoint(event.pos)
+                    ):
+                        self.paused = not self.paused
 
             # Step the game (if not paused and not done)
             if not self.paused and not done:
@@ -437,6 +448,25 @@ class Dashboard:
             screen.blit(surf, (panel_x + pad, y))
         y += 30
 
+        # Start/Pause button (opt-in, for video-capture workflows)
+        if self.show_start_button:
+            btn_w = self.PANEL_WIDTH - 2 * pad
+            btn_h = 34
+            btn_rect = pygame.Rect(panel_x + pad, y, btn_w, btn_h)
+            mouse_pos = pygame.mouse.get_pos()
+            hovered = btn_rect.collidepoint(mouse_pos)
+            btn_color = COLORS["button_hover"] if hovered else COLORS["button"]
+            pygame.draw.rect(screen, btn_color, btn_rect, border_radius=6)
+            pygame.draw.rect(screen, COLORS["panel_border"], btn_rect, width=1, border_radius=6)
+            label = "START" if self.paused else "PAUSE"
+            lbl_surf = font_large.render(label, True, COLORS["button_text"])
+            lbl_rect = lbl_surf.get_rect(center=btn_rect.center)
+            screen.blit(lbl_surf, lbl_rect)
+            self._start_button_rect = btn_rect
+            y += btn_h + 10
+        else:
+            self._start_button_rect = None
+
         # Divider
         pygame.draw.line(
             screen, COLORS["panel_border"],
@@ -543,6 +573,11 @@ def main():
         "--mode", type=str, default=None, choices=["observe", "play"],
         help="Initial mode (default: observe if model provided, play otherwise)"
     )
+    parser.add_argument(
+        "--start-button", action="store_true",
+        help="Start paused and show an on-screen Start/Pause button "
+             "(useful for kicking off a screen recorder before gameplay begins)"
+    )
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -552,7 +587,12 @@ def main():
     if mode is None:
         mode = "observe" if args.model else "play"
 
-    dashboard = Dashboard(config, model_path=args.model, mode=mode)
+    dashboard = Dashboard(
+        config,
+        model_path=args.model,
+        mode=mode,
+        show_start_button=args.start_button,
+    )
     dashboard.run()
 
 
