@@ -16,7 +16,22 @@ import yaml
 import sys
 from pathlib import Path
 
+# pygame 2.6.1 has a circular import that crashes on Python 3.14: pygame/font.py
+# imports from pygame.sysfont before defining Font, and sysfont.py does
+# `from pygame.font import Font` at module scope. Pre-register a stub pygame.font
+# module exposing Font (from _freetype) so sysfont can import cleanly, then drop
+# the stub and let the real pygame.font module load normally.
+import sys as _sys
+import types as _types
 import pygame
+import pygame._freetype as _pygame_freetype
+_font_stub = _types.ModuleType("pygame.font")
+_font_stub.Font = _pygame_freetype.Font
+_sys.modules["pygame.font"] = _font_stub
+import pygame.sysfont  # noqa: F401  (warms sysfont against the stub)
+del _sys.modules["pygame.font"]
+import pygame.font  # noqa: E402  (real module; sysfont already cached)
+
 import numpy as np
 
 sys.path.append(str(Path(__file__).parent.parent))
