@@ -129,7 +129,8 @@ def train(config: dict):
 
     # Metrics
     episode_rewards = []
-    episode_lengths = []
+    episode_steps = []    # steps per episode (episode duration)
+    episode_lengths = []  # final snake length at episode end
     episode_scores = []
     losses = []
 
@@ -137,12 +138,16 @@ def train(config: dict):
     n_episodes = config["training"]["n_episodes"]
     eval_freq = config["training"]["eval_freq"]
     save_freq = config["training"]["save_freq"]
+    train_freq = gpu_config.get("train_freq", 1)  # train every N env steps
+
+    # Global env step counter for train_freq
+    total_env_steps = 0
 
     # Main loop
     for episode in tqdm(range(n_episodes), desc="Training"):
         state, info = env.reset(seed=seed + episode if seed is not None else None)
         episode_reward = 0
-        episode_length = 0
+        episode_step = 0
 
         done = False
         while not done:
@@ -156,31 +161,36 @@ def train(config: dict):
             # Store transition (use terminated, not done, so truncated episodes bootstrap)
             agent.store_transition(state, action, reward, next_state, terminated)
 
-            # Train agent
-            metrics = agent.train_step()
-            if metrics:
-                losses.append(metrics["loss"])
+            # Train agent every train_freq env steps
+            total_env_steps += 1
+            if total_env_steps % train_freq == 0:
+                metrics = agent.train_step()
+                if metrics:
+                    losses.append(metrics["loss"])
 
             # Update state
             state = next_state
             episode_reward += reward
-            episode_length += 1
+            episode_step += 1
 
         # Store episode metrics
         episode_rewards.append(episode_reward)
-        episode_lengths.append(episode_length)
+        episode_steps.append(episode_step)
+        episode_lengths.append(info["length"])  # actual snake segment count
         episode_scores.append(info["score"])
 
         # Logging
         if (episode + 1) % 100 == 0:
             avg_reward = np.mean(episode_rewards[-100:])
             avg_score = np.mean(episode_scores[-100:])
-            avg_length = np.mean(episode_lengths[-100:])
+            avg_snake_len = np.mean(episode_lengths[-100:])
+            avg_steps = np.mean(episode_steps[-100:])
 
             print(f"\nEpisode {episode + 1}")
             print(f"  Avg Reward: {avg_reward:.2f}")
             print(f"  Avg Score: {avg_score:.2f}")
-            print(f"  Avg Length: {avg_length:.2f}")
+            print(f"  Avg Snake Length: {avg_snake_len:.2f}")
+            print(f"  Avg Steps/Episode: {avg_steps:.2f}")
             print(f"  Epsilon: {agent.epsilon:.3f}")
             print(f"  LR: {agent.optimizer.param_groups[0]['lr']:.2e}")
             if losses:
@@ -204,7 +214,7 @@ def train(config: dict):
         # Save model checkpoint
         if (episode + 1) % save_freq == 0:
             agent.save(str(run_dir / f"model_ep{episode + 1}.pt"))
-            plot_training_curves(episode_rewards, episode_scores, losses, run_dir)
+            plot_training_curves(episode_rewards, episode_scores, losses, run_dir, lengths=episode_lengths)
 
     # Save final model
     agent.save(str(run_dir / "model_final.pt"))
@@ -213,13 +223,14 @@ def train(config: dict):
     np.savez(
         run_dir / "metrics.npz",
         rewards=episode_rewards,
+        steps=episode_steps,
         lengths=episode_lengths,
         scores=episode_scores,
         losses=losses,
     )
 
     # Plot training curves
-    plot_training_curves(episode_rewards, episode_scores, losses, run_dir)
+    plot_training_curves(episode_rewards, episode_scores, losses, run_dir, lengths=episode_lengths)
 
     env.close()
     print(f"\nTraining complete! Results saved to {run_dir}")
@@ -261,7 +272,7 @@ def evaluate(agent: DQNAgent, config: dict, n_episodes: int = 100) -> dict:
     }
 
 
-def plot_training_curves(rewards, scores, losses, save_dir):
+def plot_training_curves(rewards, scores, losses, save_dir, lengths=None):
     """Plots training curves."""
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
@@ -292,13 +303,21 @@ def plot_training_curves(rewards, scores, losses, save_dir):
     else:
         axes[1, 0].set_title("Training Loss (no data)")
 
-    # Histogram of final rewards
-    n_hist = min(1000, len(rewards))
-    if n_hist > 0:
-        axes[1, 1].hist(rewards[-n_hist:], bins=50)
-        axes[1, 1].set_title(f"Reward Distribution (last {n_hist})")
-        axes[1, 1].set_xlabel("Reward")
-        axes[1, 1].set_ylabel("Count")
+    # Snake length over time (or reward histogram if lengths not available)
+    if lengths:
+        axes[1, 1].plot(lengths, alpha=0.3)
+        if len(lengths) >= 100:
+            axes[1, 1].plot(moving_average(lengths, 100), color="red")
+        axes[1, 1].set_title("Snake Length at Episode End")
+        axes[1, 1].set_xlabel("Episode")
+        axes[1, 1].set_ylabel("Length (segments)")
+    else:
+        n_hist = min(1000, len(rewards))
+        if n_hist > 0:
+            axes[1, 1].hist(rewards[-n_hist:], bins=50)
+            axes[1, 1].set_title(f"Reward Distribution (last {n_hist})")
+            axes[1, 1].set_xlabel("Reward")
+            axes[1, 1].set_ylabel("Count")
 
     plt.tight_layout()
     plt.savefig(save_dir / "training_curves.png", dpi=150)

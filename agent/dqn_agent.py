@@ -163,18 +163,23 @@ class DQNAgent:
             self.q_network = cnn_cls(input_channels=cnn_channels, grid_size=grid_size, n_actions=n_actions, use_dueling=use_dueling).to(self.device)
             self.target_network = cnn_cls(input_channels=cnn_channels, grid_size=grid_size, n_actions=n_actions, use_dueling=use_dueling).to(self.device)
 
-        print("Q-network:")
-        print(torchinfo.summary(self.q_network, input_size=input_size, device=self.device))
-        print("*" * 100)
-        print("Target network:")
-        print(torchinfo.summary(self.target_network, input_size=input_size, device=self.device))
-        print("*" * 100)
+        try:
+            print("Q-network:")
+            print(torchinfo.summary(self.q_network, input_size=input_size, device=self.device))
+            print("*" * 100)
+            print("Target network:")
+            print(torchinfo.summary(self.target_network, input_size=input_size, device=self.device))
+            print("*" * 100)
+        except UnicodeEncodeError:
+            summary = torchinfo.summary(self.q_network, input_size=input_size, device=self.device, verbose=0)
+            print(f"Q-network: {summary.total_params:,} params, {summary.trainable_params:,} trainable")
+            print("*" * 100)
 
         # Copy weights
         self.target_network.load_state_dict(self.q_network.state_dict())
 
-        # Compile networks for fused kernels (PyTorch 2.0+)
-        if use_compile and hasattr(torch, "compile"):
+        # Compile networks for fused kernels (PyTorch 2.0+, CUDA/MPS only)
+        if use_compile and hasattr(torch, "compile") and self.device.type in ("cuda", "mps"):
             try:
                 self.q_network = torch.compile(self.q_network)
                 self.target_network = torch.compile(self.target_network)

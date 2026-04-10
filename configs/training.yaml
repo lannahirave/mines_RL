@@ -23,28 +23,28 @@ env:
   object_lifetime: 100 # steps before uneaten objects despawn (-1 = permanent)
 
 agent:
-  learning_rate: 0.00005
+  learning_rate: 0.0001
   discount_factor: 0.99
   epsilon_start: 1.0
   epsilon_end: 0.05
-  epsilon_decay_steps: 500000
-  buffer_size: 200000
-  batch_size: 256
+  epsilon_decay_steps: 250000   # reach epsilon_end ~60% through training (prev 500k was only 63% annealed → eps=0.40 at end, crippling train-time metrics)
+  buffer_size: 300000
+  batch_size: 1024             # fast GPU step (<0.5ms on 3080) without stalling CPU env loop
   target_update_freq: 2000
   use_double_dqn: true
   use_dueling: true
   use_prioritized_replay: true
-  lr_cosine_steps: 2000000 # T_max for cosine annealing (~20K eps * ~100 steps avg)
-  lr_min: 0.000001 # minimum LR at end of cosine schedule
-  warmup_steps: 0 # min buffer size before training starts (0 = use batch_size)
-  tau: 1.0 # target network interpolation (1.0 = hard copy, <1 = Polyak)
-  sign_log_reward: false # sign(r)*log(1+|r|) reward scaling
-  n_step: 1 # multi-step returns (1 = standard TD)
-  n_frames: 1 # observation frame stacking (1 = no stacking)
-  per_beta_frames: 2000000 # steps for PER beta to anneal from beta_start to 1.0 (match training horizon)
+  lr_cosine_steps: 700000       # matches realistic training-step budget (~1M with longer episodes)
+  lr_min: 0.000001
+  warmup_steps: 10000          # fill buffer before training; prevents noisy PER priorities early on
+  tau: 1.0
+  sign_log_reward: true        # log-scale rewards — stabilizes training across -500..+70 range
+  n_step: 3                    # 3-step returns: faster credit assignment, more stable than 1-step
+  n_frames: 1
+  per_beta_frames: 400000       # anneal PER beta→1 in realistic horizon (prev 2M → never annealed)
 
 training:
-  n_episodes: 20000
+  n_episodes: 35000
   eval_freq: 1500
   save_freq: 3000
   seed: 42
@@ -53,6 +53,7 @@ training:
 gpu:
   device: "auto" # "auto", "cuda", "mps", or "cpu"
   use_amp: true # Automatic mixed precision (uses tensor cores)
-  use_compile: true # torch.compile - enable for PyTorch 2.0+ (small overhead on first run)
-  pin_memory: true # Pinned memory for async CPU→GPU transfers
-  train_steps_per_update: 1 # Gradient steps per env step (increase to 2-4 for more GPU utilization)
+  use_compile: false # torch.compile - negligible benefit for small MLP; adds 30s warmup per run
+  pin_memory: true # Pinned memory for async CPU->GPU transfers
+  train_steps_per_update: 1 # gradient steps per training call
+  train_freq: 3             # train every N env steps (reduces optimizer overhead; 3 = ~50 it/s)
