@@ -19,15 +19,21 @@ Parallel execution: all n_samples × n_actions rollouts are dispatched at once
 to a ThreadPoolExecutor.  PyTorch GPU operations (CUDA / MPS) release the GIL,
 so inference calls run truly concurrently across threads.  On CPU, env steps
 still benefit from overlapping with inference work in other threads.  Device
-priority follows the agent's own device (CUDA → MPS → CPU).
+priority follows the agent's own device (CUDA -> MPS -> CPU).
 """
 
 import copy
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
+from typing import Any, Tuple, List
 
 import numpy as np
+
+
+# Scores below this threshold indicate the rollout hit a death on the first
+# step.  Death penalties range from -175 (long snake) to -500 (short snake);
+# the worst non-death step is rotten fruit at -20, so -50 is a clean separator.
+DEATH_SCORE_THRESHOLD = -50.0
 
 
 def _rollout(env_copy: Any, agent: Any, obs: np.ndarray, depth: int, discount: float) -> float:
@@ -60,6 +66,59 @@ def _single_action_score(
     return reward + discount * _rollout(env_copy, agent, next_obs, depth - 1, discount)
 
 
+def _compute_scores(
+    env: Any,
+    agent: Any,
+    obs: np.ndarray,
+    n_actions: int,
+    depth: int,
+    discount: float,
+    n_samples: int,
+) -> List[float]:
+    """Runs all n_samples x n_actions rollouts in parallel; returns per-action best scores."""
+    n_tasks = n_samples * n_actions
+    best_scores = [-float("inf")] * n_actions
+    lock = threading.Lock()
+
+    def run_task(action: int) -> None:
+        score = _single_action_score(env, agent, obs, action, depth, discount)
+        with lock:
+            if score > best_scores[action]:
+                best_scores[action] = score
+
+    with ThreadPoolExecutor(max_workers=n_tasks) as executor:
+        futures = [
+            executor.submit(run_task, action)
+            for _ in range(n_samples)
+            for action in range(n_actions)
+        ]
+        for f in as_completed(futures):
+            f.result()
+
+    return best_scores
+
+
+def lookahead_action_with_scores(
+    env: Any,
+    agent: Any,
+    obs: np.ndarray,
+    snake_length: int,
+    n_actions: int = 3,
+    max_depth: int = 15,
+    discount: float = 0.99,
+    n_samples: int = 1,
+) -> Tuple[int, List[float]]:
+    """Like ``lookahead_action`` but also returns the per-action best scores.
+
+    Returns:
+        (best_action, scores) where scores[i] is the best rollout return seen
+        for action i across all samples.
+    """
+    depth = max(1, min(snake_length, max_depth))
+    scores = _compute_scores(env, agent, obs, n_actions, depth, discount, n_samples)
+    return int(np.argmax(scores)), scores
+
+
 def lookahead_action(
     env: Any,
     agent: Any,
@@ -72,47 +131,15 @@ def lookahead_action(
 ) -> int:
     """Selects the action with the highest lookahead return.
 
-    All n_samples × n_actions rollouts are run in parallel via
+    All n_samples x n_actions rollouts are run in parallel via
     ThreadPoolExecutor.  GPU inference (CUDA / MPS) releases Python's GIL so
     threads execute concurrently on the device; CPU falls back to
     GIL-interleaved execution which still overlaps env steps with inference.
 
-    Args:
-        env: current environment (may be wrapped; will be deepcopied per task).
-        agent: agent with ``select_action(obs, training=False) -> int``.
-        obs: current observation.
-        snake_length: current snake length (used to compute rollout depth).
-        n_actions: number of candidate actions.
-        max_depth: hard cap on rollout depth.
-        discount: per-step discount applied inside rollouts.
-        n_samples: independent rollout samples per action (stochastic outcomes
-            differ because Python's global RNG advances between deepcopies).
-            The best peak return across all samples for each action is used.
-
     Returns:
         Best action index.
     """
-    depth = max(1, min(snake_length, max_depth))
-    n_tasks = n_samples * n_actions
-
-    # Per-action best scores, protected by a lock for concurrent writes.
-    best_scores = [-float("inf")] * n_actions
-    lock = threading.Lock()
-
-    def run_task(action: int) -> None:
-        score = _single_action_score(env, agent, obs, action, depth, discount)
-        with lock:
-            if score > best_scores[action]:
-                best_scores[action] = score
-
-    # All tasks are independent — dispatch everything at once.
-    with ThreadPoolExecutor(max_workers=n_tasks) as executor:
-        futures = [
-            executor.submit(run_task, action)
-            for _ in range(n_samples)
-            for action in range(n_actions)
-        ]
-        for f in as_completed(futures):
-            f.result()  # re-raise any exception from a worker thread
-
-    return int(np.argmax(best_scores))
+    action, _ = lookahead_action_with_scores(
+        env, agent, obs, snake_length, n_actions, max_depth, discount, n_samples
+    )
+    return action

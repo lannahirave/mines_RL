@@ -26,7 +26,7 @@ from env.wrappers import FrameStack
 from env.snake import Direction, Action
 from env.game_objects import ObjectType
 from agent.dqn_agent import DQNAgent
-from agent.lookahead import lookahead_action
+from agent.lookahead import lookahead_action_with_scores, DEATH_SCORE_THRESHOLD
 
 
 # Dashboard colors (extend renderer palette)
@@ -99,10 +99,11 @@ class Dashboard:
         self.total_score = 0
         self.scores_history: list = []
 
-        # Death-action stats: how many deaths occurred per action type
+        # Per-step danger predictions: how many times the agent's raw greedy
+        # prediction scored in the death range (before lookahead correction).
         # 0=FORWARD, 1=TURN_LEFT, 2=TURN_RIGHT
         self.deaths_by_action = {0: 0, 1: 0, 2: 0}
-        self.timeouts = 0  # truncated (not a real death)
+        self.timeouts = 0  # truncated episodes (not a real death)
 
         # Agent (loaded later if needed)
         self.agent: DQNAgent = None
@@ -192,7 +193,9 @@ class Dashboard:
                 current_steps = info["steps"]
 
                 if done:
-                    self._end_episode(current_score, action, terminated)
+                    if not terminated:
+                        self.timeouts += 1
+                    self._end_episode(current_score)
 
             # Draw
             screen.fill(COLORS["background"])
@@ -278,15 +281,24 @@ class Dashboard:
     def _get_action(self, state, info: dict) -> int:
         """Gets the next action based on current mode."""
         if self.mode == "observe" and self.agent is not None:
+            agent_raw = self.agent.select_action(state, training=False)
+
             if self.lookahead_depth > 0:
-                return lookahead_action(
+                la_action, scores = lookahead_action_with_scores(
                     self.env, self.agent, state,
                     snake_length=info["length"],
                     max_depth=self.lookahead_depth,
                     discount=self.config["agent"]["discount_factor"],
                     n_samples=self.lookahead_samples,
                 )
-            return self.agent.select_action(state, training=False)
+                # Count every step where agent's raw prediction was in death range.
+                if scores[agent_raw] < DEATH_SCORE_THRESHOLD:
+                    self.deaths_by_action[agent_raw] = self.deaths_by_action.get(agent_raw, 0) + 1
+
+                # Return whichever prediction scores higher: agent's or lookahead's.
+                return int(la_action) if scores[la_action] > scores[agent_raw] else agent_raw
+
+            return agent_raw
         elif self.mode == "play":
             if self._pending_action is not None:
                 action = self._pending_action
@@ -296,17 +308,12 @@ class Dashboard:
         else:
             return Action.FORWARD.value
 
-    def _end_episode(self, score: int, last_action: int, terminated: bool) -> None:
+    def _end_episode(self, score: int) -> None:
         """Updates stats at end of episode."""
         self.episode_count += 1
         self.total_score += score
         self.best_score = max(self.best_score, score)
         self.scores_history.append(score)
-
-        if terminated:
-            self.deaths_by_action[last_action] = self.deaths_by_action.get(last_action, 0) + 1
-        else:
-            self.timeouts += 1
 
     def _draw_grid(self, screen: pygame.Surface) -> None:
         """Draws the game grid lines."""
@@ -489,20 +496,22 @@ class Dashboard:
             y += 22
 
         y += 8
-        # Death-action stats
-        total_deaths = sum(self.deaths_by_action.values())
-        surf = font.render("Death actions:", True, (200, 180, 100))
+        # Per-step danger predictions (agent's raw prediction was in death range)
+        total_danger = sum(self.deaths_by_action.values())
+        label_color = (200, 180, 100) if self.lookahead_depth > 0 else (150, 150, 150)
+        header = "Danger preds:" if self.lookahead_depth > 0 else "Danger preds: (need lookahead)"
+        surf = font.render(header, True, label_color)
         screen.blit(surf, (panel_x + pad, y))
         y += 20
         action_labels = {0: "Fwd", 1: "Left", 2: "Right"}
-        for act, label in action_labels.items():
+        for act, lbl in action_labels.items():
             n = self.deaths_by_action.get(act, 0)
-            pct = 100 * n / total_deaths if total_deaths > 0 else 0
-            surf = font.render(f"  {label}: {n} ({pct:.0f}%)", True, COLORS["text"])
+            pct = 100 * n / total_danger if total_danger > 0 else 0
+            surf = font.render(f"  {lbl}: {n} ({pct:.0f}%)", True, COLORS["text"])
             screen.blit(surf, (panel_x + pad, y))
             y += 20
         turned = self.deaths_by_action.get(1, 0) + self.deaths_by_action.get(2, 0)
-        pct_turned = 100 * turned / total_deaths if total_deaths > 0 else 0
+        pct_turned = 100 * turned / total_danger if total_danger > 0 else 0
         surf = font.render(f"  Dir changed: {turned} ({pct_turned:.0f}%)", True, (180, 220, 180))
         screen.blit(surf, (panel_x + pad, y))
         y += 20
