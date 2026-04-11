@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from env.snake_env import make_snake_env
 from env.wrappers import FrameStack
 from agent.dqn_agent import DQNAgent
+from agent.lookahead import lookahead_action
 
 
 def set_seed(seed: int):
@@ -206,8 +207,10 @@ def train(config: dict):
 
         # Evaluation
         if (episode + 1) % eval_freq == 0:
-            eval_results = evaluate(agent, config, n_episodes=20)
-            print(f"\n  [Eval] Avg Score: {eval_results['mean_score']:.2f}, "
+            lookahead_depth = config["training"].get("lookahead_depth", 0)
+            eval_results = evaluate(agent, config, n_episodes=20, lookahead_depth=lookahead_depth)
+            label = f" (lookahead={lookahead_depth})" if lookahead_depth > 0 else ""
+            print(f"\n  [Eval{label}] Avg Score: {eval_results['mean_score']:.2f}, "
                   f"Avg Length: {eval_results['mean_length']:.2f}, "
                   f"Avg Steps: {eval_results['mean_steps']:.2f}")
 
@@ -238,8 +241,13 @@ def train(config: dict):
     return agent, env
 
 
-def evaluate(agent: DQNAgent, config: dict, n_episodes: int = 100) -> dict:
-    """Evaluates agent without exploration."""
+def evaluate(agent: DQNAgent, config: dict, n_episodes: int = 100, lookahead_depth: int = 0) -> dict:
+    """Evaluates agent without exploration.
+
+    Args:
+        lookahead_depth: if > 0, use greedy rollout lookahead with this depth cap
+            instead of one-step greedy action selection.
+    """
     env = make_snake_env(config["env"])
     n_frames = config["agent"].get("n_frames", 1)
     if n_frames > 1:
@@ -255,7 +263,15 @@ def evaluate(agent: DQNAgent, config: dict, n_episodes: int = 100) -> dict:
         done = False
 
         while not done:
-            action = agent.select_action(state, training=False)
+            if lookahead_depth > 0:
+                action = lookahead_action(
+                    env, agent, state,
+                    snake_length=info["length"],
+                    max_depth=lookahead_depth,
+                    discount=config["agent"]["discount_factor"],
+                )
+            else:
+                action = agent.select_action(state, training=False)
             state, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
 

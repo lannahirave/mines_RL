@@ -48,6 +48,8 @@ training:
   eval_freq: 1500
   save_freq: 3000
   seed: 42
+  lookahead_depth: 0  # rollout depth for eval; 0 = disabled, >0 = min(snake_length, depth)
+  weights: results/runs/20260410_101650/model_ep18000.pt  # checkpoint to load for eval
 
 # GPU optimization settings
 gpu:

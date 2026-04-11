@@ -26,6 +26,7 @@ from env.wrappers import FrameStack
 from env.snake import Direction, Action
 from env.game_objects import ObjectType
 from agent.dqn_agent import DQNAgent
+from agent.lookahead import lookahead_action
 
 
 # Dashboard colors (extend renderer palette)
@@ -72,10 +73,14 @@ class Dashboard:
         config: dict,
         model_path: str = None,
         mode: str = "observe",
+        lookahead_depth: int = 0,
+        lookahead_samples: int = 1,
     ):
         self.config = config
         self.model_path = model_path
         self.mode = mode
+        self.lookahead_depth = lookahead_depth
+        self.lookahead_samples = lookahead_samples
 
         # Grid dimensions
         self.grid_size = tuple(config["env"]["grid_size"])
@@ -93,6 +98,11 @@ class Dashboard:
         self.best_score = 0
         self.total_score = 0
         self.scores_history: list = []
+
+        # Death-action stats: how many deaths occurred per action type
+        # 0=FORWARD, 1=TURN_LEFT, 2=TURN_RIGHT
+        self.deaths_by_action = {0: 0, 1: 0, 2: 0}
+        self.timeouts = 0  # truncated (not a real death)
 
         # Agent (loaded later if needed)
         self.agent: DQNAgent = None
@@ -175,14 +185,14 @@ class Dashboard:
 
             # Step the game (if not paused and not done)
             if not self.paused and not done:
-                action = self._get_action(state)
+                action = self._get_action(state, info)
                 state, reward, terminated, truncated, info = self.env.step(action)
                 done = terminated or truncated
                 current_score = info["score"]
                 current_steps = info["steps"]
 
                 if done:
-                    self._end_episode(current_score)
+                    self._end_episode(current_score, action, terminated)
 
             # Draw
             screen.fill(COLORS["background"])
@@ -265,9 +275,17 @@ class Dashboard:
         # 180-degree turn: just go forward (can't reverse)
         return Action.FORWARD.value
 
-    def _get_action(self, state) -> int:
+    def _get_action(self, state, info: dict) -> int:
         """Gets the next action based on current mode."""
         if self.mode == "observe" and self.agent is not None:
+            if self.lookahead_depth > 0:
+                return lookahead_action(
+                    self.env, self.agent, state,
+                    snake_length=info["length"],
+                    max_depth=self.lookahead_depth,
+                    discount=self.config["agent"]["discount_factor"],
+                    n_samples=self.lookahead_samples,
+                )
             return self.agent.select_action(state, training=False)
         elif self.mode == "play":
             if self._pending_action is not None:
@@ -278,12 +296,17 @@ class Dashboard:
         else:
             return Action.FORWARD.value
 
-    def _end_episode(self, score: int) -> None:
+    def _end_episode(self, score: int, last_action: int, terminated: bool) -> None:
         """Updates stats at end of episode."""
         self.episode_count += 1
         self.total_score += score
         self.best_score = max(self.best_score, score)
         self.scores_history.append(score)
+
+        if terminated:
+            self.deaths_by_action[last_action] = self.deaths_by_action.get(last_action, 0) + 1
+        else:
+            self.timeouts += 1
 
     def _draw_grid(self, screen: pygame.Surface) -> None:
         """Draws the game grid lines."""
@@ -465,11 +488,41 @@ class Dashboard:
             screen.blit(surf, (panel_x + pad, y))
             y += 22
 
+        y += 8
+        # Death-action stats
+        total_deaths = sum(self.deaths_by_action.values())
+        surf = font.render("Death actions:", True, (200, 180, 100))
+        screen.blit(surf, (panel_x + pad, y))
+        y += 20
+        action_labels = {0: "Fwd", 1: "Left", 2: "Right"}
+        for act, label in action_labels.items():
+            n = self.deaths_by_action.get(act, 0)
+            pct = 100 * n / total_deaths if total_deaths > 0 else 0
+            surf = font.render(f"  {label}: {n} ({pct:.0f}%)", True, COLORS["text"])
+            screen.blit(surf, (panel_x + pad, y))
+            y += 20
+        turned = self.deaths_by_action.get(1, 0) + self.deaths_by_action.get(2, 0)
+        pct_turned = 100 * turned / total_deaths if total_deaths > 0 else 0
+        surf = font.render(f"  Dir changed: {turned} ({pct_turned:.0f}%)", True, (180, 220, 180))
+        screen.blit(surf, (panel_x + pad, y))
+        y += 20
+        if self.timeouts:
+            surf = font.render(f"  Timeouts: {self.timeouts}", True, (150, 150, 180))
+            screen.blit(surf, (panel_x + pad, y))
+            y += 20
+
         y += 15
 
-        # Speed
+        # Speed / lookahead status
         fps = self.FPS_OPTIONS[self.fps_index]
         surf = font.render(f"Speed: {fps} FPS", True, COLORS["text"])
+        screen.blit(surf, (panel_x + pad, y))
+        y += 22
+        if self.lookahead_depth > 0:
+            la_color = (100, 220, 255)
+            surf = font.render(f"Lookahead: d={self.lookahead_depth} s={self.lookahead_samples}", True, la_color)
+        else:
+            surf = font.render("Lookahead: off", True, (120, 120, 140))
         screen.blit(surf, (panel_x + pad, y))
         y += 30
 
@@ -504,6 +557,8 @@ class Dashboard:
             controls += ["", f"Overlay: {name}"]
 
         for line in controls:
+            if y + 20 > self.window_h:
+                break
             surf = font.render(line, True, COLORS["text"])
             screen.blit(surf, (panel_x + pad, y))
             y += 20
@@ -528,6 +583,14 @@ def main():
         "--mode", type=str, default=None, choices=["observe", "play"],
         help="Initial mode (default: observe if model provided, play otherwise)"
     )
+    parser.add_argument(
+        "--lookahead", type=int, default=0,
+        help="Lookahead rollout depth (0 = disabled)"
+    )
+    parser.add_argument(
+        "--samples", type=int, default=5,
+        help="Rollout samples per action when lookahead is enabled (default: 5)"
+    )
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -537,7 +600,13 @@ def main():
     if mode is None:
         mode = "observe" if args.model else "play"
 
-    dashboard = Dashboard(config, model_path=args.model, mode=mode)
+    dashboard = Dashboard(
+        config,
+        model_path=args.model,
+        mode=mode,
+        lookahead_depth=args.lookahead,
+        lookahead_samples=args.samples,
+    )
     dashboard.run()
 
 
