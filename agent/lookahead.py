@@ -12,13 +12,19 @@ from deeper lookahead.
 Multi-sample mode (n_samples > 1): each candidate action's rollout is repeated
 up to ``n_samples`` times.  Because the environment uses Python's global random
 state (object spawning, placement), successive deepcopies from the same base
-state produce different stochastic outcomes.  The sample loop stops early for
-an action as soon as a new best score is found, then continues across samples
-to see if any action can beat it — giving "repeat until finds better pathing,
-up to N times" semantics.  The action with the highest peak return wins.
+state produce different stochastic outcomes.  The action with the highest peak
+return across all samples wins.
+
+Parallel execution: all n_samples × n_actions rollouts are dispatched at once
+to a ThreadPoolExecutor.  PyTorch GPU operations (CUDA / MPS) release the GIL,
+so inference calls run truly concurrently across threads.  On CPU, env steps
+still benefit from overlapping with inference work in other threads.  Device
+priority follows the agent's own device (CUDA → MPS → CPU).
 """
 
 import copy
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import numpy as np
@@ -66,32 +72,47 @@ def lookahead_action(
 ) -> int:
     """Selects the action with the highest lookahead return.
 
+    All n_samples × n_actions rollouts are run in parallel via
+    ThreadPoolExecutor.  GPU inference (CUDA / MPS) releases Python's GIL so
+    threads execute concurrently on the device; CPU falls back to
+    GIL-interleaved execution which still overlaps env steps with inference.
+
     Args:
-        env: current environment (may be wrapped; will be deepcopied per action).
+        env: current environment (may be wrapped; will be deepcopied per task).
         agent: agent with ``select_action(obs, training=False) -> int``.
         obs: current observation.
         snake_length: current snake length (used to compute rollout depth).
         n_actions: number of candidate actions.
         max_depth: hard cap on rollout depth.
         discount: per-step discount applied inside rollouts.
-        n_samples: number of independent rollout samples per action.  Each
-            sample gets different random outcomes (Python global RNG advances
-            between deepcopies).  The best score found across all samples for
-            each action is used.  Loops repeat until a better path is found or
-            the sample budget is exhausted (up to n_samples times).
+        n_samples: independent rollout samples per action (stochastic outcomes
+            differ because Python's global RNG advances between deepcopies).
+            The best peak return across all samples for each action is used.
 
     Returns:
         Best action index.
     """
     depth = max(1, min(snake_length, max_depth))
+    n_tasks = n_samples * n_actions
 
-    # best_score[action] = highest return seen for that action across all samples
+    # Per-action best scores, protected by a lock for concurrent writes.
     best_scores = [-float("inf")] * n_actions
+    lock = threading.Lock()
 
-    for _ in range(n_samples):
-        for action in range(n_actions):
-            score = _single_action_score(env, agent, obs, action, depth, discount)
+    def run_task(action: int) -> None:
+        score = _single_action_score(env, agent, obs, action, depth, discount)
+        with lock:
             if score > best_scores[action]:
                 best_scores[action] = score
+
+    # All tasks are independent — dispatch everything at once.
+    with ThreadPoolExecutor(max_workers=n_tasks) as executor:
+        futures = [
+            executor.submit(run_task, action)
+            for _ in range(n_samples)
+            for action in range(n_actions)
+        ]
+        for f in as_completed(futures):
+            f.result()  # re-raise any exception from a worker thread
 
     return int(np.argmax(best_scores))
